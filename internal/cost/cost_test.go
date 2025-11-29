@@ -206,8 +206,8 @@ func TestAggregateStats(t *testing.T) {
 
 	stats := aggregateStats(cache, now)
 
-	// Daily: 2025-11-28 and 2025-11-29 (cutoff is 2025-11-28)
-	expectedDaily := 50.0 + 30.0
+	// Daily: only today (2025-11-29)
+	expectedDaily := 50.0
 	if stats.DailyCost != expectedDaily {
 		t.Errorf("expected daily cost %.2f, got %.2f", expectedDaily, stats.DailyCost)
 	}
@@ -479,9 +479,9 @@ func TestDayOverflow(t *testing.T) {
 	now := time.Date(2025, 11, 29, 18, 0, 0, 0, time.UTC)
 	stats := aggregateStats(cache, now)
 
-	// Daily: 11-28 and 11-29
-	if stats.DailyCost != 6.0 {
-		t.Errorf("expected daily $6.00, got $%.2f", stats.DailyCost)
+	// Daily: only 11-29 (today)
+	if stats.DailyCost != 3.0 {
+		t.Errorf("expected daily $3.00, got $%.2f", stats.DailyCost)
 	}
 
 	// Weekly: all 3 days

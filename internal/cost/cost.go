@@ -241,7 +241,7 @@ func processLogFile(path string, info os.FileInfo, cache *CostCache, pricing *ty
 func aggregateStats(cache *CostCache, now time.Time) *types.TokenStats {
 	stats := &types.TokenStats{}
 
-	dailyCutoff := now.AddDate(0, 0, -1).Format("2006-01-02")
+	today := now.Format("2006-01-02")
 	weeklyCutoff := now.AddDate(0, 0, -7).Format("2006-01-02")
 
 	for day, cost := range cache.DayCosts {
@@ -249,7 +249,7 @@ func aggregateStats(cache *CostCache, now time.Time) *types.TokenStats {
 		if day >= weeklyCutoff {
 			stats.WeeklyCost += cost
 		}
-		if day >= dailyCutoff {
+		if day == today {
 			stats.DailyCost += cost
 		}
 	}
