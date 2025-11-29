@@ -2,8 +2,9 @@ package cost
 
 import (
 	"bufio"
-	_ "embed"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,8 +14,17 @@ import (
 	"github.com/erwint/claude-code-statusline/internal/types"
 )
 
-//go:embed pricing.json
+const (
+	pricingURL      = "https://raw.githubusercontent.com/erwint/claude-code-statusline/main/pricing.json"
+	pricingCacheTTL = 24 * time.Hour
+)
+
 var embeddedPricing []byte
+
+// SetEmbeddedPricing sets the embedded pricing data from main
+func SetEmbeddedPricing(data []byte) {
+	embeddedPricing = data
+}
 
 // GetTokenStats calculates cost statistics from log files
 func GetTokenStats() *types.TokenStats {
@@ -173,18 +183,68 @@ func stripVersion(model string) string {
 }
 
 func loadPricing() *types.PricingData {
-	var pricing types.PricingData
-
-	// Try to load from cache first (for updated pricing)
 	cacheDir := filepath.Join(os.Getenv("HOME"), ".cache", "claude-code-statusline")
 	cacheFile := filepath.Join(cacheDir, "pricing.json")
-	if data, err := os.ReadFile(cacheFile); err == nil {
-		if json.Unmarshal(data, &pricing) == nil {
-			return &pricing
+
+	// Check if cache exists and is fresh (< 24h old)
+	if info, err := os.Stat(cacheFile); err == nil {
+		if time.Since(info.ModTime()) < pricingCacheTTL {
+			if data, err := os.ReadFile(cacheFile); err == nil {
+				var pricing types.PricingData
+				if json.Unmarshal(data, &pricing) == nil {
+					config.DebugLog("Using cached pricing (age: %v)", time.Since(info.ModTime()))
+					return &pricing
+				}
+			}
+		} else {
+			config.DebugLog("Pricing cache expired, fetching update...")
+			go fetchAndCachePricing(cacheDir, cacheFile)
 		}
+	} else {
+		// No cache, try to fetch in background
+		config.DebugLog("No pricing cache, fetching...")
+		go fetchAndCachePricing(cacheDir, cacheFile)
 	}
 
 	// Fall back to embedded pricing
+	var pricing types.PricingData
 	json.Unmarshal(embeddedPricing, &pricing)
 	return &pricing
+}
+
+func fetchAndCachePricing(cacheDir, cacheFile string) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(pricingURL)
+	if err != nil {
+		config.DebugLog("Failed to fetch pricing: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		config.DebugLog("Pricing fetch returned status %d", resp.StatusCode)
+		return
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		config.DebugLog("Failed to read pricing response: %v", err)
+		return
+	}
+
+	// Validate JSON before caching
+	var pricing types.PricingData
+	if err := json.Unmarshal(data, &pricing); err != nil {
+		config.DebugLog("Invalid pricing JSON: %v", err)
+		return
+	}
+
+	// Save to cache
+	os.MkdirAll(cacheDir, 0755)
+	if err := os.WriteFile(cacheFile, data, 0644); err != nil {
+		config.DebugLog("Failed to cache pricing: %v", err)
+		return
+	}
+
+	config.DebugLog("Pricing updated and cached")
 }
