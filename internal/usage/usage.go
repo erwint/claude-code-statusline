@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/erwint/claude-code-statusline/internal/config"
@@ -54,23 +55,41 @@ func GetUsageAndSubscription() (*types.UsageCache, string, string) {
 }
 
 func getCredentials() *types.Credentials {
-	username := os.Getenv("USER")
-	if username == "" {
-		if u, err := user.Current(); err == nil {
-			username = u.Username
+	// First, try reading from credentials file (preferred)
+	credFile := filepath.Join(os.Getenv("HOME"), ".claude", "credentials.json")
+	if data, err := os.ReadFile(credFile); err == nil {
+		var creds types.Credentials
+		if err := json.Unmarshal(data, &creds); err == nil {
+			config.DebugLog("Loaded credentials from file: %s", credFile)
+			return &creds
+		}
+		config.DebugLog("Failed to parse credentials file: %v", err)
+	}
+
+	// Fall back to system keyring (macOS moves credentials there automatically)
+	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" || runtime.GOOS == "windows" {
+		username := os.Getenv("USER")
+		if username == "" {
+			if u, err := user.Current(); err == nil {
+				username = u.Username
+			}
+		}
+
+		secret, err := keyring.Get("Claude Code-credentials", username)
+		if err == nil && secret != "" {
+			var creds types.Credentials
+			if err := json.Unmarshal([]byte(secret), &creds); err == nil {
+				config.DebugLog("Loaded credentials from system keyring")
+				return &creds
+			}
+			config.DebugLog("Failed to parse keyring credentials: %v", err)
+		} else if err != nil {
+			config.DebugLog("Keyring access failed: %v", err)
 		}
 	}
 
-	secret, err := keyring.Get("Claude Code-credentials", username)
-	if err != nil || secret == "" {
-		return nil
-	}
-
-	var creds types.Credentials
-	if err := json.Unmarshal([]byte(secret), &creds); err != nil {
-		return nil
-	}
-	return &creds
+	config.DebugLog("No credentials found")
+	return nil
 }
 
 func getCacheFile(name string) string {

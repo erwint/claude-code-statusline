@@ -3,6 +3,7 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"os"
 
 	"github.com/erwint/claude-code-statusline/internal/config"
 	"github.com/erwint/claude-code-statusline/internal/cost"
@@ -12,10 +13,25 @@ import (
 	"github.com/erwint/claude-code-statusline/internal/usage"
 )
 
+// Set by goreleaser ldflags
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 //go:embed pricing.json
 var embeddedPricing []byte
 
 func main() {
+	// Handle --version before parsing other flags
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-version" || arg == "-v" {
+			fmt.Printf("claude-code-statusline %s (%s) built %s\n", version, commit, date)
+			os.Exit(0)
+		}
+	}
+
 	config.Parse()
 	cost.SetEmbeddedPricing(embeddedPricing)
 
