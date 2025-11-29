@@ -1,0 +1,8 @@
+# Binary
+claude-code-statusline
+
+*.swp
+*.swo
+
+# OS
+.DS_Store
