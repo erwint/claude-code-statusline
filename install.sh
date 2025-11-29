@@ -10,29 +10,25 @@ INSTALL_DIR="${INSTALL_DIR:-$HOME/.claude/bin}"
 BINARY_NAME="claude-code-statusline"
 REPO="erwint/claude-code-statusline"
 
-# Detect OS and architecture
-detect_platform() {
+# Download pre-built binary from GitHub releases
+download_binary() {
+    # Detect OS and architecture
     OS=$(uname -s | tr '[:upper:]' '[:lower:]')
     ARCH=$(uname -m)
 
     case "$ARCH" in
         x86_64|amd64) ARCH="amd64" ;;
         arm64|aarch64) ARCH="arm64" ;;
-        *) echo -e "${RED}Unsupported architecture: $ARCH${NC}"; exit 1 ;;
+        *) echo -e "${YELLOW}Unsupported architecture: $ARCH${NC}"; return 1 ;;
     esac
 
     case "$OS" in
         darwin|linux) ;;
         mingw*|msys*|cygwin*) OS="windows" ;;
-        *) echo -e "${RED}Unsupported OS: $OS${NC}"; exit 1 ;;
+        *) echo -e "${YELLOW}Unsupported OS: $OS${NC}"; return 1 ;;
     esac
 
-    echo "${OS}_${ARCH}"
-}
-
-# Download pre-built binary from GitHub releases
-download_binary() {
-    PLATFORM=$(detect_platform)
+    PLATFORM="${OS}_${ARCH}"
     echo -e "${GREEN}Detected platform: $PLATFORM${NC}"
 
     # Get latest release tag
@@ -48,12 +44,16 @@ download_binary() {
     EXT="tar.gz"
     [ "$OS" = "windows" ] && EXT="zip"
 
+    BINARY_FILE="$BINARY_NAME"
+    [ "$OS" = "windows" ] && BINARY_FILE="${BINARY_NAME}.exe"
+
     URL="https://github.com/$REPO/releases/download/$LATEST/${BINARY_NAME}_${PLATFORM}.${EXT}"
+    echo -e "URL: $URL"
 
     TMPDIR=$(mktemp -d)
     trap "rm -rf $TMPDIR" EXIT
 
-    if curl -sL "$URL" -o "$TMPDIR/archive.$EXT"; then
+    if curl -fsSL "$URL" -o "$TMPDIR/archive.$EXT"; then
         cd "$TMPDIR"
         if [ "$EXT" = "zip" ]; then
             unzip -q "archive.$EXT"
@@ -61,16 +61,20 @@ download_binary() {
             tar xzf "archive.$EXT"
         fi
 
-        if [ -f "$BINARY_NAME" ]; then
+        if [ -f "$BINARY_FILE" ]; then
             mkdir -p "$INSTALL_DIR"
-            mv "$BINARY_NAME" "$INSTALL_DIR/"
-            chmod +x "$INSTALL_DIR/$BINARY_NAME"
+            mv "$BINARY_FILE" "$INSTALL_DIR/"
+            chmod +x "$INSTALL_DIR/$BINARY_FILE"
             echo -e "${GREEN}Installed $BINARY_NAME $LATEST to $INSTALL_DIR${NC}"
             return 0
+        else
+            echo -e "${YELLOW}Binary not found in archive${NC}"
+            ls -la
         fi
+    else
+        echo -e "${YELLOW}Download failed${NC}"
     fi
 
-    echo -e "${YELLOW}Download failed, building from source...${NC}"
     return 1
 }
 
