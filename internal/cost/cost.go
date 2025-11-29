@@ -225,8 +225,8 @@ func processLogFile(path string, info os.FileInfo, cache *CostCache, pricing *ty
 		// Calculate cost
 		cost := calculateCost(entry.Message.Model, inputTokens, outputTokens, cacheCreation, cacheRead, pricing)
 
-		// Add to day bucket
-		day := ts.Format("2006-01-02")
+		// Add to day bucket (use local time for user's perspective)
+		day := ts.Local().Format("2006-01-02")
 		cache.DayCosts[day] += cost
 	}
 

@@ -63,7 +63,8 @@ download_binary() {
 
         if [ -f "$BINARY_FILE" ]; then
             mkdir -p "$INSTALL_DIR"
-            mv "$BINARY_FILE" "$INSTALL_DIR/"
+            rm -f "$INSTALL_DIR/$BINARY_FILE"
+            cp "$BINARY_FILE" "$INSTALL_DIR/"
             chmod +x "$INSTALL_DIR/$BINARY_FILE"
             echo -e "${GREEN}Installed $BINARY_NAME $LATEST to $INSTALL_DIR${NC}"
             return 0
@@ -97,7 +98,9 @@ build_from_source() {
     fi
 
     mkdir -p "$INSTALL_DIR"
-    mv "$BINARY_NAME" "$INSTALL_DIR/"
+    rm -f "$INSTALL_DIR/$BINARY_NAME"
+    cp "$BINARY_NAME" "$INSTALL_DIR/"
+    rm "$BINARY_NAME"
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
 
     echo -e "${GREEN}Built and installed to $INSTALL_DIR/$BINARY_NAME${NC}"
