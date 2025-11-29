@@ -11,9 +11,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
-	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,19 +29,8 @@ var (
 	noColor     bool
 	displayMode string
 	infoMode    string
-	plan        string
+	debug       bool
 )
-
-// Plan limits
-var planLimits = map[string]struct {
-	tokens   int
-	messages int
-}{
-	"pro":    {19000, 250},
-	"max5":   {88000, 1000},
-	"max20":  {220000, 2000},
-	"custom": {44000, 250},
-}
 
 // ANSI color codes
 const (
@@ -69,14 +57,25 @@ type UsageCache struct {
 }
 
 type UsageResponse struct {
-	UsagePercent float64 `json:"usage_percent"`
-	ResetTime    string  `json:"reset_time"`
+	FiveHour *UsageWindow `json:"five_hour"`
+	SevenDay *UsageWindow `json:"seven_day"`
+}
+
+type UsageWindow struct {
+	Utilization float64 `json:"utilization"`
+	ResetsAt    string  `json:"resets_at"`
 }
 
 type Credentials struct {
-	AccessToken  string `json:"accessToken"`
-	RefreshToken string `json:"refreshToken"`
-	ExpiresAt    string `json:"expiresAt"`
+	ClaudeAiOauth *OAuthCredentials `json:"claudeAiOauth"`
+}
+
+type OAuthCredentials struct {
+	AccessToken      string      `json:"accessToken"`
+	RefreshToken     string      `json:"refreshToken"`
+	ExpiresAt        json.Number `json:"expiresAt"`
+	SubscriptionType string      `json:"subscriptionType"`
+	RateLimitTier    string      `json:"rateLimitTier"`
 }
 
 type PricingData struct {
@@ -92,44 +91,64 @@ type ModelPricing struct {
 type LogEntry struct {
 	Timestamp string `json:"timestamp"`
 	Type      string `json:"type"`
-	Model     string `json:"model"`
 	Message   struct {
+		Model string `json:"model"`
 		Usage struct {
-			InputTokens             int `json:"inputTokens"`
-			OutputTokens            int `json:"outputTokens"`
+			InputTokens              int `json:"input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
 			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-			CacheReadInputTokens    int `json:"cache_read_input_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 		} `json:"usage"`
 		ID string `json:"id"`
 	} `json:"message"`
-	Usage struct {
-		InputTokens             int `json:"inputTokens"`
-		OutputTokens            int `json:"outputTokens"`
-		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-		CacheReadInputTokens    int `json:"cache_read_input_tokens"`
-	} `json:"usage"`
-	MessageID string `json:"message_id"`
 	RequestID string `json:"requestId"`
 }
 
 type TokenStats struct {
-	InputTokens  int
-	OutputTokens int
-	TotalTokens  int
-	Cost         float64
+	DailyCost   float64
+	WeeklyCost  float64
+	MonthlyCost float64
+}
+
+// SessionInput is the JSON input from Claude Code via stdin
+type SessionInput struct {
+	Model     string `json:"model"`
+	SessionID string `json:"sessionId"`
+	Cwd       string `json:"cwd"`
 }
 
 func main() {
 	parseFlags()
 
+	// Read session input from stdin (if available)
+	session := readSessionInput()
+
 	// Get all the status components
 	gitInfo := getGitInfo()
-	usage := getUsage()
+	usage, subscription := getUsageAndSubscription()
 	tokenStats := getTokenStats()
 
 	// Format and output
-	output := formatStatusLine(gitInfo, usage, tokenStats)
+	output := formatStatusLine(session, gitInfo, usage, tokenStats, subscription)
 	fmt.Print(output)
+}
+
+func readSessionInput() *SessionInput {
+	// Check if stdin has data (non-blocking)
+	stat, _ := os.Stdin.Stat()
+	if (stat.Mode() & os.ModeCharDevice) != 0 {
+		// No piped input
+		return nil
+	}
+
+	var session SessionInput
+	if err := json.NewDecoder(os.Stdin).Decode(&session); err != nil {
+		if debug {
+			fmt.Fprintf(os.Stderr, "Failed to parse session input: %v\n", err)
+		}
+		return nil
+	}
+	return &session
 }
 
 func parseFlags() {
@@ -137,7 +156,7 @@ func parseFlags() {
 	flag.BoolVar(&noColor, "no-color", false, "Disable ANSI colors")
 	flag.StringVar(&displayMode, "display-mode", getEnv("CLAUDE_STATUS_DISPLAY_MODE", "colors"), "Display mode: colors|minimal|background")
 	flag.StringVar(&infoMode, "info-mode", getEnv("CLAUDE_STATUS_INFO_MODE", "none"), "Info mode: none|emoji|text")
-	flag.StringVar(&plan, "plan", getEnv("CLAUDE_STATUS_PLAN", "max5"), "Plan type: pro|max5|max20|custom")
+	flag.BoolVar(&debug, "debug", false, "Enable debug output")
 	flag.Parse()
 }
 
@@ -224,27 +243,63 @@ func runGitCommand(args ...string) (string, error) {
 }
 
 // Usage functions
-func getUsage() *UsageCache {
+func getUsageAndSubscription() (*UsageCache, string) {
 	cacheFile := getCacheFile("usage.json")
+	subscription := ""
+
+	// Get subscription from credentials
+	creds := getCredentials()
+	if creds != nil && creds.ClaudeAiOauth != nil {
+		subscription = creds.ClaudeAiOauth.SubscriptionType
+	}
 
 	// Check cache
 	if cache, valid := loadCache(cacheFile); valid {
-		return cache
+		if debug {
+			fmt.Fprintf(os.Stderr, "Using cached usage: %.1f%%\n", cache.UsagePercent)
+		}
+		return cache, subscription
 	}
 
 	// Fetch from API
-	usage, err := fetchUsage()
+	usage, err := fetchUsage(creds)
 	if err != nil {
+		if debug {
+			fmt.Fprintf(os.Stderr, "API error: %v\n", err)
+		}
 		// Return cached data even if expired, or nil
 		if cache, _ := loadCacheIgnoreExpiry(cacheFile); cache != nil {
-			return cache
+			return cache, subscription
 		}
-		return nil
+		return nil, subscription
 	}
 
 	// Save cache
 	saveCache(cacheFile, usage)
-	return usage
+	if debug {
+		fmt.Fprintf(os.Stderr, "Fetched usage: %.1f%%\n", usage.UsagePercent)
+	}
+	return usage, subscription
+}
+
+func getCredentials() *Credentials {
+	username := os.Getenv("USER")
+	if username == "" {
+		if u, err := user.Current(); err == nil {
+			username = u.Username
+		}
+	}
+
+	secret, err := keyring.Get("Claude Code-credentials", username)
+	if err != nil || secret == "" {
+		return nil
+	}
+
+	var creds Credentials
+	if err := json.Unmarshal([]byte(secret), &creds); err != nil {
+		return nil
+	}
+	return &creds
 }
 
 func getCacheFile(name string) string {
@@ -304,10 +359,9 @@ func saveCache(file string, cache *UsageCache) {
 	os.WriteFile(file, data, 0644)
 }
 
-func fetchUsage() (*UsageCache, error) {
-	token, err := getAccessToken()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get access token: %w", err)
+func fetchUsage(creds *Credentials) (*UsageCache, error) {
+	if creds == nil || creds.ClaudeAiOauth == nil || creds.ClaudeAiOauth.AccessToken == "" {
+		return nil, fmt.Errorf("no access token available")
 	}
 
 	req, err := http.NewRequest("GET", "https://api.anthropic.com/api/oauth/usage", nil)
@@ -315,7 +369,7 @@ func fetchUsage() (*UsageCache, error) {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+creds.ClaudeAiOauth.AccessToken)
 	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
 
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -335,36 +389,16 @@ func fetchUsage() (*UsageCache, error) {
 		return nil, err
 	}
 
-	resetTime, _ := time.Parse(time.RFC3339, usageResp.ResetTime)
+	// Use five_hour window as the primary usage metric
+	if usageResp.FiveHour == nil {
+		return nil, fmt.Errorf("no five_hour usage data")
+	}
+
+	resetTime, _ := time.Parse(time.RFC3339, usageResp.FiveHour.ResetsAt)
 	return &UsageCache{
-		UsagePercent: usageResp.UsagePercent,
+		UsagePercent: usageResp.FiveHour.Utilization,
 		ResetTime:    resetTime,
 	}, nil
-}
-
-func getAccessToken() (string, error) {
-	// Try keyring first
-	secret, err := keyring.Get("Claude Code-credentials", "default")
-	if err == nil && secret != "" {
-		var creds Credentials
-		if err := json.Unmarshal([]byte(secret), &creds); err == nil {
-			return creds.AccessToken, nil
-		}
-	}
-
-	// Fallback to credentials file
-	credFile := filepath.Join(os.Getenv("HOME"), ".claude", ".credentials.json")
-	data, err := os.ReadFile(credFile)
-	if err != nil {
-		return "", fmt.Errorf("failed to read credentials: %w", err)
-	}
-
-	var creds Credentials
-	if err := json.Unmarshal(data, &creds); err != nil {
-		return "", fmt.Errorf("failed to parse credentials: %w", err)
-	}
-
-	return creds.AccessToken, nil
 }
 
 // Token stats functions
@@ -373,16 +407,24 @@ func getTokenStats() *TokenStats {
 	pricing := loadPricing()
 	seen := make(map[string]bool)
 
+	now := time.Now()
+	dailyCutoff := now.AddDate(0, 0, -1)
+	weeklyCutoff := now.AddDate(0, 0, -7)
+	monthlyCutoff := now.AddDate(0, -1, 0)
+
 	projectsDir := filepath.Join(os.Getenv("HOME"), ".claude", "projects")
-	cutoff := time.Now().AddDate(0, 0, -1) // Last 24 hours for daily stats
+
+	if debug {
+		fmt.Fprintf(os.Stderr, "Scanning logs from: %s\n", projectsDir)
+	}
 
 	filepath.Walk(projectsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".jsonl") {
 			return nil
 		}
 
-		// Skip files older than cutoff for performance
-		if info.ModTime().Before(cutoff.AddDate(0, 0, -1)) {
+		// Skip files older than monthly cutoff for performance
+		if info.ModTime().Before(monthlyCutoff) {
 			return nil
 		}
 
@@ -393,7 +435,6 @@ func getTokenStats() *TokenStats {
 		defer file.Close()
 
 		scanner := bufio.NewScanner(file)
-		// Increase buffer size for long lines
 		buf := make([]byte, 0, 64*1024)
 		scanner.Buffer(buf, 1024*1024)
 
@@ -405,54 +446,67 @@ func getTokenStats() *TokenStats {
 
 			// Parse timestamp
 			ts, err := time.Parse(time.RFC3339, entry.Timestamp)
-			if err != nil || ts.Before(cutoff) {
+			if err != nil || ts.Before(monthlyCutoff) {
 				continue
 			}
 
-			// Deduplicate
-			id := entry.MessageID
-			if id == "" {
-				id = entry.Message.ID
+			// Only process assistant messages with usage data
+			if entry.Type != "assistant" {
+				continue
 			}
-			reqID := entry.RequestID
-			key := id + ":" + reqID
-			if seen[key] {
+
+			// Deduplicate by message ID + request ID
+			key := entry.Message.ID + ":" + entry.RequestID
+			if key == ":" || seen[key] {
 				continue
 			}
 			seen[key] = true
 
-			// Get token counts
+			// Get token counts from message.usage
 			inputTokens := entry.Message.Usage.InputTokens
 			outputTokens := entry.Message.Usage.OutputTokens
-			if inputTokens == 0 {
-				inputTokens = entry.Usage.InputTokens
-			}
-			if outputTokens == 0 {
-				outputTokens = entry.Usage.OutputTokens
-			}
+			cacheCreation := entry.Message.Usage.CacheCreationInputTokens
+			cacheRead := entry.Message.Usage.CacheReadInputTokens
 
-			if inputTokens == 0 && outputTokens == 0 {
+			if inputTokens == 0 && outputTokens == 0 && cacheCreation == 0 && cacheRead == 0 {
 				continue
 			}
 
-			stats.InputTokens += inputTokens
-			stats.OutputTokens += outputTokens
-			stats.TotalTokens += inputTokens + outputTokens
-
-			// Calculate cost
-			model := entry.Model
+			// Calculate cost based on model
+			// Cache read tokens are discounted (10% of input price)
+			// Cache creation tokens are charged at 1.25x input price
+			var cost float64
+			model := entry.Message.Model
 			if p, ok := pricing.Models[model]; ok {
-				stats.Cost += float64(inputTokens) / 1000000 * p.Input
-				stats.Cost += float64(outputTokens) / 1000000 * p.Output
+				cost += float64(inputTokens) / 1000000 * p.Input
+				cost += float64(cacheCreation) / 1000000 * p.Input * 1.25
+				cost += float64(cacheRead) / 1000000 * p.Input * 0.1
+				cost += float64(outputTokens) / 1000000 * p.Output
 			} else {
-				// Default to sonnet pricing if model not found
-				stats.Cost += float64(inputTokens) / 1000000 * 3.0
-				stats.Cost += float64(outputTokens) / 1000000 * 15.0
+				// Default to sonnet pricing for unknown models
+				cost += float64(inputTokens) / 1000000 * 3.0
+				cost += float64(cacheCreation) / 1000000 * 3.0 * 1.25
+				cost += float64(cacheRead) / 1000000 * 3.0 * 0.1
+				cost += float64(outputTokens) / 1000000 * 15.0
+			}
+
+			// Add to appropriate buckets
+			stats.MonthlyCost += cost
+			if ts.After(weeklyCutoff) {
+				stats.WeeklyCost += cost
+			}
+			if ts.After(dailyCutoff) {
+				stats.DailyCost += cost
 			}
 		}
 
 		return nil
 	})
+
+	if debug {
+		fmt.Fprintf(os.Stderr, "Cost stats: daily=$%.2f, weekly=$%.2f, monthly=$%.2f\n",
+			stats.DailyCost, stats.WeeklyCost, stats.MonthlyCost)
+	}
 
 	return stats
 }
@@ -474,7 +528,7 @@ func loadPricing() *PricingData {
 }
 
 // Formatting functions
-func formatStatusLine(git GitInfo, usage *UsageCache, stats *TokenStats) string {
+func formatStatusLine(session *SessionInput, git GitInfo, usage *UsageCache, stats *TokenStats, subscription string) string {
 	var parts []string
 
 	// Directory
@@ -513,9 +567,26 @@ func formatStatusLine(git GitInfo, usage *UsageCache, stats *TokenStats) string 
 		parts = append(parts, colorize(gitPart, colorMagenta, bgMagenta))
 	}
 
-	// Usage info
+	// Model info
+	if session != nil && session.Model != "" {
+		modelName := formatModelName(session.Model)
+		parts = append(parts, colorize(modelName, colorCyan, bgCyan))
+	}
+
+	// Subscription type
+	if subscription != "" {
+		parts = append(parts, colorize(subscription, colorGray, bgBlue))
+	}
+
+	// Cost breakdown: monthly / weekly / daily
+	if stats.DailyCost > 0 || stats.WeeklyCost > 0 || stats.MonthlyCost > 0 {
+		costPart := fmt.Sprintf("$%.2f/m $%.2f/w $%.2f/d",
+			stats.MonthlyCost, stats.WeeklyCost, stats.DailyCost)
+		parts = append(parts, colorize(costPart, colorCyan, bgCyan))
+	}
+
+	// API Usage info (at the end)
 	if usage != nil {
-		limits := planLimits[plan]
 		usageColor := colorGreen
 		usageBg := bgGreen
 		if usage.UsagePercent >= 90 {
@@ -528,13 +599,6 @@ func formatStatusLine(git GitInfo, usage *UsageCache, stats *TokenStats) string 
 
 		usagePart := fmt.Sprintf("%.0f%%", usage.UsagePercent)
 
-		// Add token/message counts if we have stats
-		if stats.TotalTokens > 0 {
-			tokensStr := formatTokens(stats.TotalTokens)
-			limitStr := formatTokens(limits.tokens)
-			usagePart += fmt.Sprintf(" %s/%s", tokensStr, limitStr)
-		}
-
 		// Reset time
 		if !usage.ResetTime.IsZero() {
 			remaining := time.Until(usage.ResetTime)
@@ -544,12 +608,6 @@ func formatStatusLine(git GitInfo, usage *UsageCache, stats *TokenStats) string 
 		}
 
 		parts = append(parts, colorize(usagePart, usageColor, usageBg))
-	}
-
-	// Cost
-	if stats.Cost > 0 {
-		costPart := fmt.Sprintf("$%.2f", stats.Cost)
-		parts = append(parts, colorize(costPart, colorCyan, bgCyan))
 	}
 
 	// Add info mode prefixes
@@ -595,14 +653,20 @@ func colorize(text, fgColor, bgColor string) string {
 	}
 }
 
-func formatTokens(tokens int) string {
-	if tokens >= 1000000 {
-		return fmt.Sprintf("%.1fM", float64(tokens)/1000000)
+func formatModelName(model string) string {
+	// Convert model ID to friendly name
+	// e.g., "claude-opus-4-5-20251101" -> "opus-4.5"
+	model = strings.TrimPrefix(model, "claude-")
+
+	// Remove date suffix
+	if idx := strings.LastIndex(model, "-20"); idx > 0 {
+		model = model[:idx]
 	}
-	if tokens >= 1000 {
-		return fmt.Sprintf("%.1fk", float64(tokens)/1000)
-	}
-	return strconv.Itoa(tokens)
+
+	// Format version numbers
+	model = strings.ReplaceAll(model, "-", ".")
+
+	return model
 }
 
 func formatDuration(d time.Duration) string {
@@ -617,6 +681,3 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dm", minutes)
 }
 
-// Unused but kept for potential future use
-var _ = sort.Strings
-var _ = regexp.MustCompile
