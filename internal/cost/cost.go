@@ -21,98 +21,238 @@ const (
 
 var embeddedPricing []byte
 
+// CostCache stores per-day cost totals and file processing state
+type CostCache struct {
+	// DayCosts maps date string (YYYY-MM-DD) to total cost for that day
+	DayCosts map[string]float64 `json:"day_costs"`
+	// FileState tracks last processed position for each log file
+	FileState map[string]FileProcessState `json:"file_state"`
+	// ProcessedMessages tracks message IDs we've already counted
+	ProcessedMessages map[string]bool `json:"processed_messages"`
+}
+
+// FileProcessState tracks processing state for a single log file
+type FileProcessState struct {
+	ModTime time.Time `json:"mod_time"`
+	Size    int64     `json:"size"`
+	Offset  int64     `json:"offset"` // byte offset where we left off
+}
+
 // SetEmbeddedPricing sets the embedded pricing data from main
 func SetEmbeddedPricing(data []byte) {
 	embeddedPricing = data
 }
 
-// GetTokenStats calculates cost statistics from log files
+// GetTokenStats calculates cost statistics from log files with caching
 func GetTokenStats() *types.TokenStats {
-	stats := &types.TokenStats{}
+	cacheDir := filepath.Join(os.Getenv("HOME"), ".cache", "claude-code-statusline")
+	cacheFile := filepath.Join(cacheDir, "cost_cache.json")
+
+	cache := loadCostCache(cacheFile)
 	pricing := loadPricing()
-	seen := make(map[string]bool)
 
 	now := time.Now()
-	dailyCutoff := now.AddDate(0, 0, -1)
-	weeklyCutoff := now.AddDate(0, 0, -7)
+	today := now.Format("2006-01-02")
 	monthlyCutoff := now.AddDate(0, -1, 0)
 
 	projectsDir := filepath.Join(os.Getenv("HOME"), ".claude", "projects")
-
 	config.DebugLog("Scanning logs from: %s", projectsDir)
 
+	// Clean up old days from cache (older than 31 days)
+	cleanupOldDays(cache, monthlyCutoff)
+
+	// Process log files
 	filepath.Walk(projectsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".jsonl") {
 			return nil
 		}
 
-		// Skip files older than monthly cutoff for performance
+		// Skip files older than monthly cutoff
 		if info.ModTime().Before(monthlyCutoff) {
 			return nil
 		}
 
-		file, err := os.Open(path)
-		if err != nil {
-			return nil
-		}
-		defer file.Close()
-
-		scanner := bufio.NewScanner(file)
-		buf := make([]byte, 0, 64*1024)
-		scanner.Buffer(buf, 1024*1024)
-
-		for scanner.Scan() {
-			var entry types.LogEntry
-			if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
-				continue
-			}
-
-			// Parse timestamp
-			ts, err := time.Parse(time.RFC3339, entry.Timestamp)
-			if err != nil || ts.Before(monthlyCutoff) {
-				continue
-			}
-
-			// Only process assistant messages with usage data
-			if entry.Type != "assistant" {
-				continue
-			}
-
-			// Deduplicate by message ID + request ID
-			key := entry.Message.ID + ":" + entry.RequestID
-			if key == ":" || seen[key] {
-				continue
-			}
-			seen[key] = true
-
-			// Get token counts from message.usage
-			inputTokens := entry.Message.Usage.InputTokens
-			outputTokens := entry.Message.Usage.OutputTokens
-			cacheCreation := entry.Message.Usage.CacheCreationInputTokens
-			cacheRead := entry.Message.Usage.CacheReadInputTokens
-
-			if inputTokens == 0 && outputTokens == 0 && cacheCreation == 0 && cacheRead == 0 {
-				continue
-			}
-
-			// Calculate cost based on model
-			cost := calculateCost(entry.Message.Model, inputTokens, outputTokens, cacheCreation, cacheRead, pricing)
-
-			// Add to appropriate buckets
-			stats.MonthlyCost += cost
-			if ts.After(weeklyCutoff) {
-				stats.WeeklyCost += cost
-			}
-			if ts.After(dailyCutoff) {
-				stats.DailyCost += cost
-			}
-		}
-
+		processLogFile(path, info, cache, pricing, monthlyCutoff)
 		return nil
 	})
 
+	// Save updated cache
+	saveCostCache(cacheFile, cache)
+
+	// Aggregate stats from daily buckets
+	stats := aggregateStats(cache, now)
+
 	config.DebugLog("Cost stats: daily=$%.2f, weekly=$%.2f, monthly=$%.2f",
 		stats.DailyCost, stats.WeeklyCost, stats.MonthlyCost)
+
+	// For today, we need to include any new messages not yet in cache
+	_ = today // today's data is continuously updated
+
+	return stats
+}
+
+func loadCostCache(path string) *CostCache {
+	cache := &CostCache{
+		DayCosts:          make(map[string]float64),
+		FileState:         make(map[string]FileProcessState),
+		ProcessedMessages: make(map[string]bool),
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return cache
+	}
+
+	json.Unmarshal(data, cache)
+
+	// Ensure maps are initialized
+	if cache.DayCosts == nil {
+		cache.DayCosts = make(map[string]float64)
+	}
+	if cache.FileState == nil {
+		cache.FileState = make(map[string]FileProcessState)
+	}
+	if cache.ProcessedMessages == nil {
+		cache.ProcessedMessages = make(map[string]bool)
+	}
+
+	return cache
+}
+
+func saveCostCache(path string, cache *CostCache) {
+	dir := filepath.Dir(path)
+	os.MkdirAll(dir, 0755)
+
+	data, err := json.Marshal(cache)
+	if err != nil {
+		config.DebugLog("Failed to marshal cost cache: %v", err)
+		return
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		config.DebugLog("Failed to save cost cache: %v", err)
+	}
+}
+
+func cleanupOldDays(cache *CostCache, cutoff time.Time) {
+	cutoffStr := cutoff.Format("2006-01-02")
+	for day := range cache.DayCosts {
+		if day < cutoffStr {
+			delete(cache.DayCosts, day)
+		}
+	}
+
+	// Also clean up old message IDs (keep last 100k to prevent unbounded growth)
+	if len(cache.ProcessedMessages) > 100000 {
+		// Just clear it - we'll reprocess but that's fine
+		cache.ProcessedMessages = make(map[string]bool)
+		cache.FileState = make(map[string]FileProcessState)
+		config.DebugLog("Cleared message cache (exceeded 100k entries)")
+	}
+}
+
+func processLogFile(path string, info os.FileInfo, cache *CostCache, pricing *types.PricingData, monthlyCutoff time.Time) {
+	state, exists := cache.FileState[path]
+
+	// Check if file has changed since last processing
+	if exists && state.ModTime.Equal(info.ModTime()) && state.Size == info.Size() {
+		// File unchanged, skip
+		config.DebugLog("Skipping unchanged file: %s", filepath.Base(path))
+		return
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	var offset int64 = 0
+
+	// If file grew (same modtime check failed but size increased), seek to last position
+	if exists && state.Size < info.Size() && state.ModTime.Before(info.ModTime()) {
+		offset = state.Offset
+		file.Seek(offset, 0)
+		config.DebugLog("Resuming file %s from offset %d", filepath.Base(path), offset)
+	} else if exists {
+		// File was modified (possibly truncated or rewritten), reprocess from start
+		config.DebugLog("Reprocessing modified file: %s", filepath.Base(path))
+	}
+
+	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+
+	bytesRead := offset
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		bytesRead += int64(len(line)) + 1 // +1 for newline
+
+		var entry types.LogEntry
+		if err := json.Unmarshal(line, &entry); err != nil {
+			continue
+		}
+
+		// Parse timestamp
+		ts, err := time.Parse(time.RFC3339, entry.Timestamp)
+		if err != nil || ts.Before(monthlyCutoff) {
+			continue
+		}
+
+		// Only process assistant messages with usage data
+		if entry.Type != "assistant" {
+			continue
+		}
+
+		// Deduplicate by message ID + request ID
+		key := entry.Message.ID + ":" + entry.RequestID
+		if key == ":" || cache.ProcessedMessages[key] {
+			continue
+		}
+		cache.ProcessedMessages[key] = true
+
+		// Get token counts
+		inputTokens := entry.Message.Usage.InputTokens
+		outputTokens := entry.Message.Usage.OutputTokens
+		cacheCreation := entry.Message.Usage.CacheCreationInputTokens
+		cacheRead := entry.Message.Usage.CacheReadInputTokens
+
+		if inputTokens == 0 && outputTokens == 0 && cacheCreation == 0 && cacheRead == 0 {
+			continue
+		}
+
+		// Calculate cost
+		cost := calculateCost(entry.Message.Model, inputTokens, outputTokens, cacheCreation, cacheRead, pricing)
+
+		// Add to day bucket
+		day := ts.Format("2006-01-02")
+		cache.DayCosts[day] += cost
+	}
+
+	// Update file state
+	cache.FileState[path] = FileProcessState{
+		ModTime: info.ModTime(),
+		Size:    info.Size(),
+		Offset:  bytesRead,
+	}
+}
+
+func aggregateStats(cache *CostCache, now time.Time) *types.TokenStats {
+	stats := &types.TokenStats{}
+
+	dailyCutoff := now.AddDate(0, 0, -1).Format("2006-01-02")
+	weeklyCutoff := now.AddDate(0, 0, -7).Format("2006-01-02")
+
+	for day, cost := range cache.DayCosts {
+		stats.MonthlyCost += cost
+		if day >= weeklyCutoff {
+			stats.WeeklyCost += cost
+		}
+		if day >= dailyCutoff {
+			stats.DailyCost += cost
+		}
+	}
 
 	return stats
 }
@@ -149,7 +289,6 @@ func getPricing(model string, pricing *types.PricingData) types.ModelPricing {
 		}
 
 		// Try base model (e.g., "claude-sonnet-4-5" -> "claude-sonnet")
-		// Find last version number pattern
 		baseModel := stripVersion(versionedModel)
 		if p, ok := pricing.Models[baseModel]; ok {
 			return p
@@ -167,13 +306,10 @@ func getPricing(model string, pricing *types.PricingData) types.ModelPricing {
 }
 
 // stripVersion removes version numbers from model name
-// "claude-sonnet-4-5" -> "claude-sonnet"
-// "claude-opus-4" -> "claude-opus"
 func stripVersion(model string) string {
 	parts := strings.Split(model, "-")
 	var result []string
 	for _, part := range parts {
-		// Skip numeric parts (version numbers)
 		if len(part) > 0 && part[0] >= '0' && part[0] <= '9' {
 			continue
 		}
@@ -201,7 +337,6 @@ func loadPricing() *types.PricingData {
 			go fetchAndCachePricing(cacheDir, cacheFile)
 		}
 	} else {
-		// No cache, try to fetch in background
 		config.DebugLog("No pricing cache, fetching...")
 		go fetchAndCachePricing(cacheDir, cacheFile)
 	}
