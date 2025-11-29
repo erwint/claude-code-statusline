@@ -2,7 +2,7 @@
 
 A fast, lightweight statusline for [Claude Code](https://claude.ai/code) showing git info, API usage, costs, and more.
 
-![Example statusline](https://github.com/user-attachments/assets/placeholder.png)
+![Example statusline](assets/screenshot.png)
 
 ## Features
 
@@ -102,6 +102,10 @@ Pre-built binaries are available for:
 - macOS (Intel and Apple Silicon)
 - Linux (x64 and ARM64)
 - Windows (x64 and ARM64)
+
+## Acknowledgments
+
+Inspired by [gabriel-dehan/claude_monitor_statusline](https://github.com/gabriel-dehan/claude_monitor_statusline).
 
 ## License
 
