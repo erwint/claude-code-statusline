@@ -74,67 +74,192 @@ func parsePricing(html string) PricingData {
 		Models: make(map[string]ModelPricing),
 	}
 
-	// Try to find pricing patterns in HTML
-	// Pattern: model name followed by input/output prices
-	// This is a best-effort parser that may need adjustment
+	// Auto-detect model names from page
+	// Look for patterns like "Claude 3.5 Sonnet", "Opus 4.5", "Haiku 3", etc.
+	modelRegex := regexp.MustCompile(`(?i)(claude\s+)?(\d+(?:\.\d+)?)\s*(opus|sonnet|haiku)|(opus|sonnet|haiku)\s*(\d+(?:\.\d+)?)`)
 
-	// Look for patterns like "$3 / $15" or "$3.00 / $15.00" near model names
-	modelPatterns := map[string][]string{
-		"claude-opus-4-5":   {"opus 4.5", "opus-4.5", "claude opus 4.5"},
-		"claude-sonnet-4-5": {"sonnet 4.5", "sonnet-4.5", "claude sonnet 4.5"},
-		"claude-haiku-4-5":  {"haiku 4.5", "haiku-4.5", "claude haiku 4.5"},
-		"claude-opus-4":     {"opus 4.1", "opus-4.1", "opus 4", "claude opus 4"},
-		"claude-sonnet-4":   {"sonnet 4", "sonnet-4", "claude sonnet 4"},
-		"claude-sonnet-3-7": {"sonnet 3.7", "sonnet-3.7", "claude sonnet 3.7"},
-		"claude-haiku-3-5":  {"haiku 3.5", "haiku-3.5", "claude haiku 3.5"},
-		"claude-3-opus":     {"opus 3", "claude-3-opus", "claude 3 opus"},
-		"claude-3-sonnet":   {"sonnet 3", "claude-3-sonnet", "claude 3 sonnet"},
-		"claude-3-haiku":    {"haiku 3", "claude-3-haiku", "claude 3 haiku"},
-	}
+	// Price patterns: "$X.XX / MTok" or "$X / $Y" or "$X per million"
+	// Matches input and output prices
+	priceBlockRegex := regexp.MustCompile(`(?i)\$(\d+(?:\.\d+)?)\s*(?:/\s*(?:1M|MTok|million|M\s*tokens?)|\s*per\s*(?:million|1M|MTok))?\s*(?:input)?[^$]*\$(\d+(?:\.\d+)?)\s*(?:/\s*(?:1M|MTok|million|M\s*tokens?)|\s*per\s*(?:million|1M|MTok))?\s*(?:output)?`)
 
-	priceRegex := regexp.MustCompile(`\$(\d+(?:\.\d+)?)\s*(?:per|/)\s*(?:1M|MTok|million).*?\$(\d+(?:\.\d+)?)\s*(?:per|/)\s*(?:1M|MTok|million)`)
+	// Also try simpler pattern "$X / $Y"
 	simplePriceRegex := regexp.MustCompile(`\$(\d+(?:\.\d+)?)\s*/\s*\$(\d+(?:\.\d+)?)`)
 
 	htmlLower := strings.ToLower(html)
 
-	for modelID, patterns := range modelPatterns {
-		for _, pattern := range patterns {
-			idx := strings.Index(htmlLower, strings.ToLower(pattern))
-			if idx == -1 {
-				continue
-			}
+	// Find all model mentions
+	modelMatches := modelRegex.FindAllStringSubmatchIndex(htmlLower, -1)
 
-			// Look for pricing within 500 chars after the model name
-			searchArea := html[idx:min(idx+500, len(html))]
+	for _, match := range modelMatches {
+		if match[0] < 0 {
+			continue
+		}
 
-			// Try detailed pattern first
-			if matches := priceRegex.FindStringSubmatch(searchArea); len(matches) >= 3 {
-				input, _ := strconv.ParseFloat(matches[1], 64)
-				output, _ := strconv.ParseFloat(matches[2], 64)
-				if input > 0 && output > 0 {
-					pricing.Models[modelID] = ModelPricing{Input: input, Output: output}
-					break
-				}
-			}
+		modelStr := htmlLower[match[0]:match[1]]
+		modelID := normalizeModelName(modelStr)
+		if modelID == "" {
+			continue
+		}
 
-			// Try simple pattern
-			if matches := simplePriceRegex.FindStringSubmatch(searchArea); len(matches) >= 3 {
-				input, _ := strconv.ParseFloat(matches[1], 64)
-				output, _ := strconv.ParseFloat(matches[2], 64)
-				if input > 0 && output > 0 {
-					pricing.Models[modelID] = ModelPricing{Input: input, Output: output}
-					break
-				}
+		// Already have this model
+		if _, exists := pricing.Models[modelID]; exists {
+			continue
+		}
+
+		// Search for prices within 800 chars after the model name
+		searchStart := match[0]
+		searchEnd := min(match[1]+800, len(html))
+		searchArea := html[searchStart:searchEnd]
+
+		// Try to find price block
+		var input, output float64
+
+		if priceMatches := priceBlockRegex.FindStringSubmatch(searchArea); len(priceMatches) >= 3 {
+			input, _ = strconv.ParseFloat(priceMatches[1], 64)
+			output, _ = strconv.ParseFloat(priceMatches[2], 64)
+		}
+
+		// Fallback to simple pattern
+		if input == 0 || output == 0 {
+			if priceMatches := simplePriceRegex.FindStringSubmatch(searchArea); len(priceMatches) >= 3 {
+				input, _ = strconv.ParseFloat(priceMatches[1], 64)
+				output, _ = strconv.ParseFloat(priceMatches[2], 64)
 			}
+		}
+
+		if input > 0 && output > 0 {
+			pricing.Models[modelID] = ModelPricing{Input: input, Output: output}
+			fmt.Printf("  Found: %s -> $%.2f / $%.2f\n", modelID, input, output)
+		}
+	}
+
+	// Also look for JSON-LD or structured data that might contain pricing
+	jsonPricing := extractJSONPricing(html)
+	for id, price := range jsonPricing {
+		if _, exists := pricing.Models[id]; !exists {
+			pricing.Models[id] = price
 		}
 	}
 
 	return pricing
 }
 
+func normalizeModelName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	name = strings.ReplaceAll(name, "claude ", "")
+	name = strings.TrimSpace(name)
+
+	// Extract model family and version
+	var family, version string
+
+	// Pattern: "3.5 sonnet" or "sonnet 3.5" or "opus 4.5"
+	parts := strings.Fields(name)
+	for _, part := range parts {
+		switch part {
+		case "opus", "sonnet", "haiku":
+			family = part
+		default:
+			// Check if it's a version number
+			if _, err := strconv.ParseFloat(part, 64); err == nil {
+				version = part
+			}
+		}
+	}
+
+	if family == "" {
+		return ""
+	}
+
+	// Build canonical model ID
+	if version != "" {
+		// Convert "3.5" to "3-5"
+		version = strings.ReplaceAll(version, ".", "-")
+		return fmt.Sprintf("claude-%s-%s", family, version)
+	}
+
+	return fmt.Sprintf("claude-%s", family)
+}
+
+func extractJSONPricing(html string) map[string]ModelPricing {
+	result := make(map[string]ModelPricing)
+
+	// Look for JSON blocks in script tags
+	jsonRegex := regexp.MustCompile(`<script[^>]*type="application/(?:ld\+)?json"[^>]*>([\s\S]*?)</script>`)
+	matches := jsonRegex.FindAllStringSubmatch(html, -1)
+
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+
+		// Try to parse as JSON and look for pricing info
+		var data map[string]interface{}
+		if err := json.Unmarshal([]byte(match[1]), &data); err != nil {
+			continue
+		}
+
+		// Look for pricing structures (this is speculative)
+		extractPricingFromJSON(data, result)
+	}
+
+	return result
+}
+
+func extractPricingFromJSON(data map[string]interface{}, result map[string]ModelPricing) {
+	// Recursively search for pricing patterns in JSON
+	for key, value := range data {
+		keyLower := strings.ToLower(key)
+
+		// Check if this looks like a model entry
+		if strings.Contains(keyLower, "opus") || strings.Contains(keyLower, "sonnet") || strings.Contains(keyLower, "haiku") {
+			if nested, ok := value.(map[string]interface{}); ok {
+				var input, output float64
+				if v, ok := nested["input"].(float64); ok {
+					input = v
+				}
+				if v, ok := nested["output"].(float64); ok {
+					output = v
+				}
+				if input > 0 && output > 0 {
+					modelID := normalizeModelName(key)
+					if modelID != "" {
+						result[modelID] = ModelPricing{Input: input, Output: output}
+					}
+				}
+			}
+		}
+
+		// Recurse into nested objects
+		if nested, ok := value.(map[string]interface{}); ok {
+			extractPricingFromJSON(nested, result)
+		}
+		if arr, ok := value.([]interface{}); ok {
+			for _, item := range arr {
+				if nested, ok := item.(map[string]interface{}); ok {
+					extractPricingFromJSON(nested, result)
+				}
+			}
+		}
+	}
+}
+
 func getFallbackPricing() PricingData {
 	return PricingData{
 		Models: map[string]ModelPricing{
+			// Latest models (4.5 series)
+			"claude-opus-4-5":   {Input: 5.0, Output: 25.0},
+			"claude-sonnet-4-5": {Input: 3.0, Output: 15.0},
+			"claude-haiku-4-5":  {Input: 1.0, Output: 5.0},
+			// 4.x series
+			"claude-opus-4":   {Input: 15.0, Output: 75.0},
+			"claude-sonnet-4": {Input: 3.0, Output: 15.0},
+			// 3.x series
+			"claude-sonnet-3-7": {Input: 3.0, Output: 15.0},
+			"claude-haiku-3-5":  {Input: 0.8, Output: 4.0},
+			"claude-opus-3":     {Input: 15.0, Output: 75.0},
+			"claude-sonnet-3":   {Input: 3.0, Output: 15.0},
+			"claude-haiku-3":    {Input: 0.25, Output: 1.25},
+			// With date suffixes (for exact matching)
 			"claude-opus-4-5-20250514":   {Input: 5.0, Output: 25.0},
 			"claude-sonnet-4-5-20250514": {Input: 3.0, Output: 15.0},
 			"claude-haiku-4-5-20250514":  {Input: 1.0, Output: 5.0},

@@ -112,9 +112,14 @@ type TokenStats struct {
 
 // SessionInput is the JSON input from Claude Code via stdin
 type SessionInput struct {
-	Model     string `json:"model"`
-	SessionID string `json:"sessionId"`
-	Cwd       string `json:"cwd"`
+	Model     *SessionModel `json:"model"`
+	SessionID string        `json:"session_id"`
+	Cwd       string        `json:"cwd"`
+}
+
+type SessionModel struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
 }
 
 func main() {
@@ -125,30 +130,77 @@ func main() {
 
 	// Get all the status components
 	gitInfo := getGitInfo()
-	usage, subscription := getUsageAndSubscription()
+	usage, subscription, tier := getUsageAndSubscription()
 	tokenStats := getTokenStats()
 
 	// Format and output
-	output := formatStatusLine(session, gitInfo, usage, tokenStats, subscription)
+	output := formatStatusLine(session, gitInfo, usage, tokenStats, subscription, tier)
 	fmt.Print(output)
 }
 
 func readSessionInput() *SessionInput {
-	// Check if stdin has data (non-blocking)
-	stat, _ := os.Stdin.Stat()
-	if (stat.Mode() & os.ModeCharDevice) != 0 {
-		// No piped input
+	// Check if stdin has data available (non-blocking)
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		debugLog("stdin stat error: %v", err)
 		return nil
 	}
 
-	var session SessionInput
-	if err := json.NewDecoder(os.Stdin).Decode(&session); err != nil {
-		if debug {
-			fmt.Fprintf(os.Stderr, "Failed to parse session input: %v\n", err)
-		}
+	debugLog("stdin mode: %v, size: %d", stat.Mode(), stat.Size())
+
+	// Check if it's a terminal (no piped input)
+	if (stat.Mode() & os.ModeCharDevice) != 0 {
+		debugLog("stdin is terminal, skipping")
 		return nil
 	}
+
+	// Read all available data with a timeout
+	resultCh := make(chan []byte, 1)
+	go func() {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			debugLog("stdin read error: %v", err)
+			resultCh <- nil
+			return
+		}
+		resultCh <- data
+	}()
+
+	// Wait max 100ms for stdin data
+	var data []byte
+	select {
+	case data = <-resultCh:
+		debugLog("stdin data received: %d bytes", len(data))
+	case <-time.After(100 * time.Millisecond):
+		debugLog("stdin timeout")
+		return nil
+	}
+
+	if len(data) == 0 {
+		return nil
+	}
+
+	debugLog("stdin content: %s", string(data))
+
+	var session SessionInput
+	if err := json.Unmarshal(data, &session); err != nil {
+		debugLog("json unmarshal error: %v", err)
+		return nil
+	}
+	debugLog("parsed session: model=%s", session.Model)
 	return &session
+}
+
+func debugLog(format string, args ...interface{}) {
+	if !debug {
+		return
+	}
+	f, err := os.OpenFile("/tmp/claude-statusline.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
 }
 
 func parseFlags() {
@@ -243,14 +295,16 @@ func runGitCommand(args ...string) (string, error) {
 }
 
 // Usage functions
-func getUsageAndSubscription() (*UsageCache, string) {
+func getUsageAndSubscription() (*UsageCache, string, string) {
 	cacheFile := getCacheFile("usage.json")
 	subscription := ""
+	tier := ""
 
 	// Get subscription from credentials
 	creds := getCredentials()
 	if creds != nil && creds.ClaudeAiOauth != nil {
 		subscription = creds.ClaudeAiOauth.SubscriptionType
+		tier = creds.ClaudeAiOauth.RateLimitTier
 	}
 
 	// Check cache
@@ -258,7 +312,7 @@ func getUsageAndSubscription() (*UsageCache, string) {
 		if debug {
 			fmt.Fprintf(os.Stderr, "Using cached usage: %.1f%%\n", cache.UsagePercent)
 		}
-		return cache, subscription
+		return cache, subscription, tier
 	}
 
 	// Fetch from API
@@ -269,9 +323,9 @@ func getUsageAndSubscription() (*UsageCache, string) {
 		}
 		// Return cached data even if expired, or nil
 		if cache, _ := loadCacheIgnoreExpiry(cacheFile); cache != nil {
-			return cache, subscription
+			return cache, subscription, tier
 		}
-		return nil, subscription
+		return nil, subscription, tier
 	}
 
 	// Save cache
@@ -279,7 +333,7 @@ func getUsageAndSubscription() (*UsageCache, string) {
 	if debug {
 		fmt.Fprintf(os.Stderr, "Fetched usage: %.1f%%\n", usage.UsagePercent)
 	}
-	return usage, subscription
+	return usage, subscription, tier
 }
 
 func getCredentials() *Credentials {
@@ -528,7 +582,7 @@ func loadPricing() *PricingData {
 }
 
 // Formatting functions
-func formatStatusLine(session *SessionInput, git GitInfo, usage *UsageCache, stats *TokenStats, subscription string) string {
+func formatStatusLine(session *SessionInput, git GitInfo, usage *UsageCache, stats *TokenStats, subscription, tier string) string {
 	var parts []string
 
 	// Directory
@@ -567,15 +621,29 @@ func formatStatusLine(session *SessionInput, git GitInfo, usage *UsageCache, sta
 		parts = append(parts, colorize(gitPart, colorMagenta, bgMagenta))
 	}
 
-	// Model info
-	if session != nil && session.Model != "" {
-		modelName := formatModelName(session.Model)
+	// Model info (from stdin session)
+	if session != nil && session.Model != nil {
+		// Prefer display name, fall back to formatted ID
+		modelName := session.Model.DisplayName
+		if modelName == "" {
+			modelName = formatModelName(session.Model.ID)
+		}
 		parts = append(parts, colorize(modelName, colorCyan, bgCyan))
 	}
 
-	// Subscription type
-	if subscription != "" {
-		parts = append(parts, colorize(subscription, colorGray, bgBlue))
+	// Subscription type with tier
+	if subscription != "" || tier != "" {
+		subPart := subscription
+		if tier != "" {
+			// Shorten tier: "tier_1" -> "t1", "tier_2" -> "t2", etc.
+			shortTier := shortenTier(tier)
+			if subPart != "" {
+				subPart += "/" + shortTier
+			} else {
+				subPart = shortTier
+			}
+		}
+		parts = append(parts, colorize(subPart, colorGray, bgBlue))
 	}
 
 	// Cost breakdown: monthly / weekly / daily
@@ -679,5 +747,35 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh%dm", hours, minutes)
 	}
 	return fmt.Sprintf("%dm", minutes)
+}
+
+func shortenTier(tier string) string {
+	// Shorten tier names for display
+	// "default_claude_max_5x" -> "5x"
+	// "tier_1" -> "t1"
+	tier = strings.ToLower(tier)
+
+	// Handle "Nx" patterns (e.g., "_5x", "_10x")
+	// Search from the end to find the last 'x' which is more likely the multiplier
+	for i := len(tier) - 1; i >= 1; i-- {
+		if tier[i] == 'x' && tier[i-1] >= '0' && tier[i-1] <= '9' {
+			// Found a digit before 'x', extract the full number
+			start := i - 1
+			for start > 0 && tier[start-1] >= '0' && tier[start-1] <= '9' {
+				start--
+			}
+			return tier[start : i+1]
+		}
+	}
+
+	// Handle "tier_N" patterns
+	tier = strings.ReplaceAll(tier, "tier_", "t")
+	tier = strings.ReplaceAll(tier, "tier", "t")
+
+	// Remove common prefixes
+	tier = strings.TrimPrefix(tier, "default_")
+	tier = strings.TrimPrefix(tier, "claude_")
+
+	return tier
 }
 

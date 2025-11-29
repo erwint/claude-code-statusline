@@ -66,13 +66,13 @@ if [ -f "$CLAUDE_SETTINGS" ]; then
         # This is a simple approach - for complex JSON manipulation, use jq
         if command -v jq &> /dev/null; then
             jq --arg cmd "$INSTALL_DIR/$BINARY_NAME" \
-               '. + {"statusLine": {"command": $cmd}}' \
+               '. + {"statusLine": {"type": "command", "command": $cmd}}' \
                "$CLAUDE_SETTINGS" > "$CLAUDE_SETTINGS.tmp" && \
                mv "$CLAUDE_SETTINGS.tmp" "$CLAUDE_SETTINGS"
             echo -e "${GREEN}Added statusLine configuration to settings.json${NC}"
         else
             echo -e "${YELLOW}jq not found. Please manually add to $CLAUDE_SETTINGS:${NC}"
-            echo -e '  "statusLine": {"command": "'$INSTALL_DIR/$BINARY_NAME'"}'
+            echo -e '  "statusLine": {"type": "command", "command": "'$INSTALL_DIR/$BINARY_NAME'"}'
         fi
     fi
 else
@@ -80,6 +80,7 @@ else
     cat > "$CLAUDE_SETTINGS" << EOF
 {
   "statusLine": {
+    "type": "command",
     "command": "$INSTALL_DIR/$BINARY_NAME"
   }
 }
