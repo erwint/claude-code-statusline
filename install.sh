@@ -7,7 +7,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.claude/bin}"
 BINARY_NAME="claude-code-statusline"
 
 echo -e "${GREEN}Building claude-code-statusline...${NC}"
@@ -32,18 +32,14 @@ echo -e "${GREEN}Build successful!${NC}"
 # Create install directory if it doesn't exist
 mkdir -p "$INSTALL_DIR"
 
-# Move binary to install directory
-mv "$BINARY_NAME" "$INSTALL_DIR/"
+# Copy binary to install directory
+cp "$BINARY_NAME" "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/$BINARY_NAME"
+rm "$BINARY_NAME"
 
 echo -e "${GREEN}Installed to $INSTALL_DIR/$BINARY_NAME${NC}"
 
-# Check if install dir is in PATH
-if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-    echo -e "${YELLOW}Warning: $INSTALL_DIR is not in your PATH${NC}"
-    echo -e "Add this to your shell profile:"
-    echo -e "  export PATH=\"\$PATH:$INSTALL_DIR\""
-fi
+# No need to check PATH - Claude Code uses absolute path in settings
 
 # Configure Claude settings
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
@@ -101,7 +97,6 @@ echo "Configuration (optional environment variables):"
 echo "  CLAUDE_STATUSLINE_CACHE_TTL  - Cache TTL in seconds (default: 300)"
 echo "  CLAUDE_STATUS_DISPLAY_MODE   - colors|minimal|background (default: colors)"
 echo "  CLAUDE_STATUS_INFO_MODE      - none|emoji|text (default: none)"
-echo "  CLAUDE_STATUS_PLAN           - pro|max5|max20|custom (default: max5)"
 echo ""
 echo "To test manually:"
 echo "  $INSTALL_DIR/$BINARY_NAME"
