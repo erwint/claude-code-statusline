@@ -47,12 +47,23 @@ func SetEmbeddedPricing(data []byte) {
 func GetTokenStats() *types.TokenStats {
 	cacheDir := filepath.Join(os.Getenv("HOME"), ".cache", "claude-code-statusline")
 	cacheFile := filepath.Join(cacheDir, "cost_cache.json")
+	lockFile := filepath.Join(cacheDir, "cost_cache.lock")
+
+	// Ensure cache directory exists
+	os.MkdirAll(cacheDir, 0755)
+
+	// Acquire file lock for concurrent access protection
+	lock, err := acquireLock(lockFile)
+	if err != nil {
+		config.DebugLog("Failed to acquire lock, proceeding without: %v", err)
+	} else {
+		defer releaseLock(lock)
+	}
 
 	cache := loadCostCache(cacheFile)
 	pricing := loadPricing()
 
 	now := time.Now()
-	today := now.Format("2006-01-02")
 	monthlyCutoff := now.AddDate(0, -1, 0)
 
 	projectsDir := filepath.Join(os.Getenv("HOME"), ".claude", "projects")
@@ -84,9 +95,6 @@ func GetTokenStats() *types.TokenStats {
 
 	config.DebugLog("Cost stats: daily=$%.2f, weekly=$%.2f, monthly=$%.2f",
 		stats.DailyCost, stats.WeeklyCost, stats.MonthlyCost)
-
-	// For today, we need to include any new messages not yet in cache
-	_ = today // today's data is continuously updated
 
 	return stats
 }
