@@ -75,6 +75,11 @@ The install script automatically configures Claude Code by adding to `~/.claude/
 | `CLAUDE_STATUSLINE_CACHE_TTL` | `300` | Cache TTL in seconds for API usage |
 | `CLAUDE_STATUS_DISPLAY_MODE` | `colors` | `colors`, `minimal`, or `background` |
 | `CLAUDE_STATUS_INFO_MODE` | `none` | `none`, `emoji`, or `text` |
+| `CLAUDE_STATUS_AGGREGATION` | `fixed` | Cost aggregation: `fixed` or `sliding` |
+
+**Aggregation modes:**
+- `fixed`: Calendar periods - today, this week (Mon-Sun), this month (1st onwards)
+- `sliding`: Rolling windows - last 24h, last 7 days, last 30 days
 
 ### Command Line Flags
 
@@ -83,6 +88,7 @@ The install script automatically configures Claude Code by adding to `~/.claude/
 --no-color              Disable ANSI colors
 --display-mode <mode>   colors|minimal|background
 --info-mode <mode>      none|emoji|text
+--aggregation <mode>    fixed|sliding (default: fixed)
 --debug                 Enable debug logging to /tmp/claude-statusline.log
 --version               Show version info
 ```

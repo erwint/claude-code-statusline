@@ -10,11 +10,12 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	CacheTTL    int
-	NoColor     bool
-	DisplayMode string
-	InfoMode    string
-	Debug       bool
+	CacheTTL       int
+	NoColor        bool
+	DisplayMode    string
+	InfoMode       string
+	Debug          bool
+	AggregationMode string // "sliding" or "fixed"
 }
 
 // Global configuration instance
@@ -35,6 +36,7 @@ func Parse() *Config {
 	flag.BoolVar(&cfg.NoColor, "no-color", false, "Disable ANSI colors")
 	flag.StringVar(&cfg.DisplayMode, "display-mode", getEnv("CLAUDE_STATUS_DISPLAY_MODE", "colors"), "Display mode: colors|minimal|background")
 	flag.StringVar(&cfg.InfoMode, "info-mode", getEnv("CLAUDE_STATUS_INFO_MODE", "none"), "Info mode: none|emoji|text")
+	flag.StringVar(&cfg.AggregationMode, "aggregation", getEnv("CLAUDE_STATUS_AGGREGATION", "fixed"), "Cost aggregation: sliding|fixed")
 	flag.BoolVar(&cfg.Debug, "debug", false, "Enable debug output")
 	flag.Parse()
 	return cfg

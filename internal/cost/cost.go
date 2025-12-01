@@ -247,22 +247,62 @@ func processLogFile(path string, info os.FileInfo, cache *CostCache, pricing *ty
 }
 
 func aggregateStats(cache *CostCache, now time.Time) *types.TokenStats {
+	cfg := config.Get()
 	stats := &types.TokenStats{}
 
-	today := now.Format("2006-01-02")
+	if cfg.AggregationMode == "sliding" {
+		// Sliding window: last 24h, last 7 days, last 30 days
+		aggregateSliding(cache, now, stats)
+	} else {
+		// Fixed periods: today, this week, this month (default)
+		aggregateFixed(cache, now, stats)
+	}
+
+	return stats
+}
+
+// aggregateSliding uses rolling windows: last 24h, 7d, 30d
+func aggregateSliding(cache *CostCache, now time.Time, stats *types.TokenStats) {
+	dailyCutoff := now.AddDate(0, 0, -1).Format("2006-01-02")
 	weeklyCutoff := now.AddDate(0, 0, -7).Format("2006-01-02")
+	// Monthly cutoff already handled by cleanup
 
 	for day, cost := range cache.DayCosts {
 		stats.MonthlyCost += cost
 		if day >= weeklyCutoff {
 			stats.WeeklyCost += cost
 		}
+		if day >= dailyCutoff {
+			stats.DailyCost += cost
+		}
+	}
+}
+
+// aggregateFixed uses calendar periods: today, this week (Mon-Sun), this month
+func aggregateFixed(cache *CostCache, now time.Time, stats *types.TokenStats) {
+	today := now.Format("2006-01-02")
+
+	// Find start of week (Monday)
+	weekday := now.Weekday()
+	if weekday == 0 {
+		weekday = 7 // Sunday = 7
+	}
+	weekStart := now.AddDate(0, 0, -int(weekday-1)).Format("2006-01-02")
+
+	// Find start of month
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format("2006-01-02")
+
+	for day, cost := range cache.DayCosts {
+		if day >= monthStart {
+			stats.MonthlyCost += cost
+		}
+		if day >= weekStart {
+			stats.WeeklyCost += cost
+		}
 		if day == today {
 			stats.DailyCost += cost
 		}
 	}
-
-	return stats
 }
 
 func calculateCost(model string, inputTokens, outputTokens, cacheCreation, cacheRead int, pricing *types.PricingData) float64 {

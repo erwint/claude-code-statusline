@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/erwint/claude-code-statusline/internal/config"
 	"github.com/erwint/claude-code-statusline/internal/types"
 )
 
@@ -190,20 +191,23 @@ func TestCleanupOldDays(t *testing.T) {
 	}
 }
 
-func TestAggregateStats(t *testing.T) {
-	now := time.Date(2025, 11, 29, 12, 0, 0, 0, time.UTC)
+func TestAggregateStatsFixed(t *testing.T) {
+	// 2025-11-29 is a Saturday, week starts Monday 2025-11-24
+	now := time.Date(2025, 11, 29, 12, 0, 0, 0, time.Local)
 
 	cache := &CostCache{
 		DayCosts: map[string]float64{
-			"2025-11-29": 50.0,  // today
-			"2025-11-28": 30.0,  // yesterday (within daily)
-			"2025-11-25": 20.0,  // 4 days ago (within weekly)
-			"2025-11-20": 15.0,  // 9 days ago (within monthly, outside weekly)
-			"2025-11-01": 10.0,  // within monthly
-			"2025-10-15": 100.0, // should not be counted (older than 1 month)
+			"2025-11-29": 50.0,  // today (Sat)
+			"2025-11-28": 30.0,  // Friday - in this week
+			"2025-11-25": 20.0,  // Tuesday - in this week
+			"2025-11-24": 5.0,   // Monday - start of week
+			"2025-11-20": 15.0,  // last week, but in this month
+			"2025-11-01": 10.0,  // in this month
+			"2025-10-15": 100.0, // last month - not counted
 		},
 	}
 
+	// Default is "fixed" mode
 	stats := aggregateStats(cache, now)
 
 	// Daily: only today (2025-11-29)
@@ -212,13 +216,53 @@ func TestAggregateStats(t *testing.T) {
 		t.Errorf("expected daily cost %.2f, got %.2f", expectedDaily, stats.DailyCost)
 	}
 
-	// Weekly: 2025-11-22 to 2025-11-29
+	// Weekly (fixed): Mon 2025-11-24 to Sun 2025-11-30
+	expectedWeekly := 50.0 + 30.0 + 20.0 + 5.0
+	if stats.WeeklyCost != expectedWeekly {
+		t.Errorf("expected weekly cost %.2f, got %.2f", expectedWeekly, stats.WeeklyCost)
+	}
+
+	// Monthly (fixed): 2025-11-01 onwards
+	expectedMonthly := 50.0 + 30.0 + 20.0 + 5.0 + 15.0 + 10.0
+	if stats.MonthlyCost != expectedMonthly {
+		t.Errorf("expected monthly cost %.2f, got %.2f", expectedMonthly, stats.MonthlyCost)
+	}
+}
+
+func TestAggregateStatsSliding(t *testing.T) {
+	// Test sliding window mode
+	origMode := config.Get().AggregationMode
+	config.Get().AggregationMode = "sliding"
+	defer func() { config.Get().AggregationMode = origMode }()
+
+	now := time.Date(2025, 11, 29, 12, 0, 0, 0, time.Local)
+
+	cache := &CostCache{
+		DayCosts: map[string]float64{
+			"2025-11-29": 50.0,  // today
+			"2025-11-28": 30.0,  // yesterday - in last 24h window
+			"2025-11-25": 20.0,  // 4 days ago - in last 7d
+			"2025-11-20": 15.0,  // 9 days ago - outside 7d, in 30d
+			"2025-11-01": 10.0,  // in last 30d
+			"2025-10-15": 100.0, // outside 30d but in cache
+		},
+	}
+
+	stats := aggregateStats(cache, now)
+
+	// Daily (sliding): last 24h = 2025-11-28 and 2025-11-29
+	expectedDaily := 50.0 + 30.0
+	if stats.DailyCost != expectedDaily {
+		t.Errorf("expected daily cost %.2f, got %.2f", expectedDaily, stats.DailyCost)
+	}
+
+	// Weekly (sliding): last 7 days = 2025-11-22 onwards
 	expectedWeekly := 50.0 + 30.0 + 20.0
 	if stats.WeeklyCost != expectedWeekly {
 		t.Errorf("expected weekly cost %.2f, got %.2f", expectedWeekly, stats.WeeklyCost)
 	}
 
-	// Monthly: all in cache (cleanupOldDays should have removed 2025-10-15 before this)
+	// Monthly (sliding): all in cache (cleanup handles cutoff)
 	expectedMonthly := 50.0 + 30.0 + 20.0 + 15.0 + 10.0 + 100.0
 	if stats.MonthlyCost != expectedMonthly {
 		t.Errorf("expected monthly cost %.2f, got %.2f", expectedMonthly, stats.MonthlyCost)
