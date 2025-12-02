@@ -116,9 +116,16 @@ func FormatStatusLine(session *types.SessionInput, git types.GitInfo, usage *typ
 
 		// Reset time
 		if !usage.ResetTime.IsZero() {
-			remaining := time.Until(usage.ResetTime)
-			if remaining > 0 {
-				usagePart += " " + formatDuration(remaining)
+			if usage.UsagePercent >= 100 {
+				// At limit: show when it resets (local time)
+				resetLocal := usage.ResetTime.Local()
+				usagePart += fmt.Sprintf(" until %s", resetLocal.Format("15:04"))
+			} else {
+				// Not at limit: show time remaining
+				remaining := time.Until(usage.ResetTime)
+				if remaining > 0 {
+					usagePart += " " + formatDuration(remaining)
+				}
 			}
 		}
 
