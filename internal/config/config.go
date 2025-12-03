@@ -32,7 +32,7 @@ func Get() *Config {
 // Parse parses command line flags and environment variables
 func Parse() *Config {
 	cfg = &Config{}
-	flag.IntVar(&cfg.CacheTTL, "cache-ttl", getEnvInt("CLAUDE_STATUSLINE_CACHE_TTL", 300), "Cache TTL in seconds")
+	flag.IntVar(&cfg.CacheTTL, "cache-ttl", getEnvInt("CLAUDE_STATUS_CACHE_TTL", 300), "Cache TTL in seconds")
 	flag.BoolVar(&cfg.NoColor, "no-color", false, "Disable ANSI colors")
 	flag.StringVar(&cfg.DisplayMode, "display-mode", getEnv("CLAUDE_STATUS_DISPLAY_MODE", "colors"), "Display mode: colors|minimal|background")
 	flag.StringVar(&cfg.InfoMode, "info-mode", getEnv("CLAUDE_STATUS_INFO_MODE", "none"), "Info mode: none|emoji|text")

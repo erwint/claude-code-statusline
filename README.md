@@ -72,7 +72,7 @@ The install script automatically configures Claude Code by adding to `~/.claude/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLAUDE_STATUSLINE_CACHE_TTL` | `300` | Cache TTL in seconds for API usage |
+| `CLAUDE_STATUS_CACHE_TTL` | `300` | Cache TTL in seconds for API usage |
 | `CLAUDE_STATUS_DISPLAY_MODE` | `colors` | `colors`, `minimal`, or `background` |
 | `CLAUDE_STATUS_INFO_MODE` | `none` | `none`, `emoji`, or `text` |
 | `CLAUDE_STATUS_AGGREGATION` | `fixed` | Cost aggregation: `fixed` or `sliding` |
