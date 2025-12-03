@@ -114,6 +114,14 @@ func FormatStatusLine(session *types.SessionInput, git types.GitInfo, usage *typ
 
 		usagePart := fmt.Sprintf("%.0f%%", usage.UsagePercent)
 
+		// Add projection arrow if significantly off track
+		if !usage.ResetTime.IsZero() && usage.UsagePercent < 100 {
+			projection := calculateProjection(usage.UsagePercent, usage.ResetTime)
+			if projection != "" {
+				usagePart += projection
+			}
+		}
+
 		// Reset time
 		if !usage.ResetTime.IsZero() {
 			if usage.UsagePercent >= 100 {
@@ -199,6 +207,44 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh%dm", hours, minutes)
 	}
 	return fmt.Sprintf("%dm", minutes)
+}
+
+func calculateProjection(usagePercent float64, resetTime time.Time) string {
+	// Don't show projection at 100% - we show reset time instead
+	if usagePercent >= 100 {
+		return ""
+	}
+
+	remaining := time.Until(resetTime)
+
+	if remaining <= 0 {
+		return ""
+	}
+
+	// The window is 5 hours total, resetTime is when it resets
+	// Time elapsed = 5 hours - remaining
+	totalWindow := 5 * time.Hour
+	elapsed := totalWindow - remaining
+
+	if elapsed <= 0 || totalWindow <= 0 {
+		return ""
+	}
+
+	// Expected usage at this point: elapsed / total * 100
+	expectedPercent := (float64(elapsed) / float64(totalWindow)) * 100
+
+	// Calculate ±5% range of expected
+	lowerBound := expectedPercent * 0.95
+	upperBound := expectedPercent * 1.05
+
+	// Only show if outside the ±5% range
+	if usagePercent > upperBound {
+		return " " + colorRed + "↑" + colorReset // trending over
+	} else if usagePercent < lowerBound {
+		return " " + colorGreen + "↓" + colorReset // trending under
+	}
+
+	return ""
 }
 
 func shortenTier(tier string) string {
