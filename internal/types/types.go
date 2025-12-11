@@ -7,8 +7,13 @@ import (
 
 // UsageCache holds cached API usage data
 type UsageCache struct {
+	// 5-hour window
 	UsagePercent float64   `json:"usage_percent"`
 	ResetTime    time.Time `json:"reset_time"`
+
+	// 7-day window
+	SevenDayPercent float64   `json:"seven_day_percent"`
+	SevenDayResetTime time.Time `json:"seven_day_reset_time"`
 }
 
 // UsageResponse is the API response from Anthropic

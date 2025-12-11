@@ -225,6 +225,36 @@ func TestUsageStates(t *testing.T) {
 			usage: nil,
 			notContains: []string{"%", "until"},
 		},
+		{
+			name: "7-day window with normal usage",
+			usage: &types.UsageCache{
+				UsagePercent: 50.0,
+				ResetTime:    time.Now().Add(2*time.Hour + 30*time.Minute),
+				SevenDayPercent: 25.0,
+				SevenDayResetTime: time.Now().Add(3*24*time.Hour + 12*time.Hour),
+			},
+			contains: []string{"50%", "25%", "3d"},
+		},
+		{
+			name: "7-day window trending over",
+			usage: &types.UsageCache{
+				UsagePercent: 50.0,
+				ResetTime:    time.Now().Add(2*time.Hour + 30*time.Minute),
+				SevenDayPercent: 80.0,
+				SevenDayResetTime: time.Now().Add(3*24*time.Hour + 12*time.Hour), // 50% elapsed, expect ~50%
+			},
+			contains: []string{"80%", "↑", "3d"},
+		},
+		{
+			name: "7-day window at 100%",
+			usage: &types.UsageCache{
+				UsagePercent: 50.0,
+				ResetTime:    time.Now().Add(2*time.Hour + 30*time.Minute),
+				SevenDayPercent: 100.0,
+				SevenDayResetTime: time.Date(2025, 12, 15, 14, 30, 0, 0, time.Local),
+			},
+			contains: []string{"100%", "until", "Dec 15"},
+		},
 	}
 
 	cfg := &config.Config{
@@ -632,6 +662,32 @@ func TestFormatDuration(t *testing.T) {
 	}
 }
 
+func TestFormatDurationDays(t *testing.T) {
+	tests := []struct {
+		duration time.Duration
+		expected string
+	}{
+		{3*24*time.Hour + 22*time.Hour, "3d22h"},
+		{1*24*time.Hour + 5*time.Hour, "1d5h"},
+		{7*24*time.Hour + 0*time.Hour, "7d0h"},
+		{0*24*time.Hour + 23*time.Hour + 45*time.Minute, "23h45m"},
+		{0*24*time.Hour + 4*time.Hour + 20*time.Minute, "4h20m"},
+		{45 * time.Minute, "45m"},
+		{0, "0m"},
+		{-1 * time.Hour, "0m"},
+		{10*24*time.Hour + 12*time.Hour, "10d12h"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			result := formatDurationDays(tt.duration)
+			if result != tt.expected {
+				t.Errorf("formatDurationDays(%v) = %q, want %q", tt.duration, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestCalculateProjection(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -696,7 +752,7 @@ func TestCalculateProjection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resetTime := time.Now().Add(tt.remaining)
-			result := calculateProjection(tt.usagePercent, resetTime)
+			result := calculateProjection(tt.usagePercent, resetTime, 5*time.Hour)
 
 			if tt.expectArrow {
 				if result == "" {

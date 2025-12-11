@@ -102,6 +102,7 @@ func FormatStatusLine(session *types.SessionInput, git types.GitInfo, usage *typ
 
 	// API Usage info (at the end)
 	if usage != nil {
+		// 5-hour window
 		usageColor := colorGreen
 		usageBg := bgGreen
 		if usage.UsagePercent >= 90 {
@@ -116,7 +117,7 @@ func FormatStatusLine(session *types.SessionInput, git types.GitInfo, usage *typ
 
 		// Add projection arrow if significantly off track
 		if !usage.ResetTime.IsZero() && usage.UsagePercent < 100 {
-			projection := calculateProjection(usage.UsagePercent, usage.ResetTime)
+			projection := calculateProjection(usage.UsagePercent, usage.ResetTime, 5*time.Hour)
 			if projection != "" {
 				usagePart += projection
 			}
@@ -138,6 +139,43 @@ func FormatStatusLine(session *types.SessionInput, git types.GitInfo, usage *typ
 		}
 
 		parts = append(parts, colorize(usagePart, usageColor, usageBg, cfg))
+
+		// 7-day window
+		if usage.SevenDayPercent > 0 && !usage.SevenDayResetTime.IsZero() {
+			sevenDayColor := colorGreen
+			sevenDayBg := bgGreen
+			if usage.SevenDayPercent >= 90 {
+				sevenDayColor = colorRed
+				sevenDayBg = bgRed
+			} else if usage.SevenDayPercent >= 75 {
+				sevenDayColor = colorYellow
+				sevenDayBg = bgYellow
+			}
+
+			sevenDayPart := fmt.Sprintf("%.0f%%", usage.SevenDayPercent)
+
+			// Add projection arrow for 7-day window
+			if usage.SevenDayPercent < 100 {
+				projection := calculateProjection(usage.SevenDayPercent, usage.SevenDayResetTime, 7*24*time.Hour)
+				if projection != "" {
+					sevenDayPart += projection
+				}
+			}
+
+			// Reset time for 7-day window
+			if usage.SevenDayPercent >= 100 {
+				resetLocal := usage.SevenDayResetTime.Local()
+				sevenDayPart += fmt.Sprintf(" until %s", resetLocal.Format("Jan 2 15:04"))
+			} else {
+				// Not at limit: show time remaining in days/hours format
+				remaining := time.Until(usage.SevenDayResetTime)
+				if remaining > 0 {
+					sevenDayPart += " " + formatDurationDays(remaining)
+				}
+			}
+
+			parts = append(parts, colorize(sevenDayPart, sevenDayColor, sevenDayBg, cfg))
+		}
 	}
 
 	// Add info mode prefixes
@@ -209,7 +247,27 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dm", minutes)
 }
 
-func calculateProjection(usagePercent float64, resetTime time.Time) string {
+func formatDurationDays(d time.Duration) string {
+	if d < 0 {
+		return "0m"
+	}
+
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+
+	if days > 0 {
+		return fmt.Sprintf("%dd%dh", days, hours)
+	}
+
+	// Less than a day, use regular format
+	minutes := int(d.Minutes()) % 60
+	if hours > 0 {
+		return fmt.Sprintf("%dh%dm", hours, minutes)
+	}
+	return fmt.Sprintf("%dm", minutes)
+}
+
+func calculateProjection(usagePercent float64, resetTime time.Time, totalWindow time.Duration) string {
 	// Don't show projection at 100% - we show reset time instead
 	if usagePercent >= 100 {
 		return ""
@@ -221,9 +279,7 @@ func calculateProjection(usagePercent float64, resetTime time.Time) string {
 		return ""
 	}
 
-	// The window is 5 hours total, resetTime is when it resets
-	// Time elapsed = 5 hours - remaining
-	totalWindow := 5 * time.Hour
+	// Time elapsed = totalWindow - remaining
 	elapsed := totalWindow - remaining
 
 	if elapsed <= 0 || totalWindow <= 0 {

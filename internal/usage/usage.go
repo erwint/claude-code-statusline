@@ -179,14 +179,24 @@ func fetchUsage(creds *types.Credentials) (*types.UsageCache, error) {
 		return nil, err
 	}
 
-	// Use five_hour window as the primary usage metric
+	// Extract both five_hour and seven_day windows
 	if usageResp.FiveHour == nil {
 		return nil, fmt.Errorf("no five_hour usage data")
 	}
 
 	resetTime, _ := time.Parse(time.RFC3339, usageResp.FiveHour.ResetsAt)
-	return &types.UsageCache{
+
+	cache := &types.UsageCache{
 		UsagePercent: usageResp.FiveHour.Utilization,
 		ResetTime:    resetTime,
-	}, nil
+	}
+
+	// Add seven_day data if available
+	if usageResp.SevenDay != nil {
+		sevenDayResetTime, _ := time.Parse(time.RFC3339, usageResp.SevenDay.ResetsAt)
+		cache.SevenDayPercent = usageResp.SevenDay.Utilization
+		cache.SevenDayResetTime = sevenDayResetTime
+	}
+
+	return cache, nil
 }
