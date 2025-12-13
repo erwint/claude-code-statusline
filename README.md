@@ -76,6 +76,7 @@ The install script automatically configures Claude Code by adding to `~/.claude/
 | `CLAUDE_STATUS_DISPLAY_MODE` | `colors` | `colors`, `minimal`, or `background` |
 | `CLAUDE_STATUS_INFO_MODE` | `none` | `none`, `emoji`, or `text` |
 | `CLAUDE_STATUS_AGGREGATION` | `fixed` | Cost aggregation: `fixed` or `sliding` |
+| `CLAUDE_STATUS_DEBUG` | `false` | Enable debug logging to `/tmp/claude-statusline.log` |
 
 **Aggregation modes:**
 - `fixed`: Calendar periods - today, this week (Mon-Sun), this month (1st onwards)
@@ -91,6 +92,7 @@ The install script automatically configures Claude Code by adding to `~/.claude/
 --aggregation <mode>    fixed|sliding (default: fixed)
 --debug                 Enable debug logging to /tmp/claude-statusline.log
 --version               Show version info
+--update                Download and install the latest version
 ```
 
 ## How It Works
