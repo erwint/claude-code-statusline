@@ -177,13 +177,17 @@ func processLogFile(path string, info os.FileInfo, cache *CostCache, pricing *ty
 
 	var offset int64 = 0
 
-	// If file grew (same modtime check failed but size increased), seek to last position
-	if exists && state.Size < info.Size() && state.ModTime.Before(info.ModTime()) {
+	// If file grew, seek to last position (don't require modtime change - active files may buffer writes)
+	if exists && state.Size < info.Size() {
 		offset = state.Offset
 		file.Seek(offset, 0)
-		config.DebugLog("Resuming file %s from offset %d", filepath.Base(path), offset)
+		config.DebugLog("Resuming file %s from offset %d (was %d, now %d bytes)",
+			filepath.Base(path), offset, state.Size, info.Size())
+	} else if exists && state.Size > info.Size() {
+		// File shrank (truncated or rewritten), reprocess from start
+		config.DebugLog("File shrank, reprocessing from start: %s", filepath.Base(path))
 	} else if exists {
-		// File was modified (possibly truncated or rewritten), reprocess from start
+		// File same size but modtime changed, reprocess from start
 		config.DebugLog("Reprocessing modified file: %s", filepath.Base(path))
 	}
 
