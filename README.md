@@ -76,6 +76,7 @@ The install script automatically configures Claude Code by adding to `~/.claude/
 | `CLAUDE_STATUS_DISPLAY_MODE` | `colors` | `colors`, `minimal`, or `background` |
 | `CLAUDE_STATUS_INFO_MODE` | `none` | `none`, `emoji`, or `text` |
 | `CLAUDE_STATUS_AGGREGATION` | `fixed` | Cost aggregation: `fixed` or `sliding` |
+| `CLAUDE_STATUS_AUTO_UPDATE` | `true` | Enable automatic daily update checks |
 | `CLAUDE_STATUS_DEBUG` | `false` | Enable debug logging to `/tmp/claude-statusline.log` |
 
 **Aggregation modes:**
@@ -90,10 +91,13 @@ The install script automatically configures Claude Code by adding to `~/.claude/
 --display-mode <mode>   colors|minimal|background
 --info-mode <mode>      none|emoji|text
 --aggregation <mode>    fixed|sliding (default: fixed)
+--auto-update           Enable automatic daily updates (default: true)
 --debug                 Enable debug logging to /tmp/claude-statusline.log
 --version               Show version info
 --update                Download and install the latest version
 ```
+
+**Auto-updates:** By default, the statusline checks for updates once per day (with ±2 hour jitter to avoid server load). If a new version is available, it automatically downloads and installs it in the background. You can disable this with `--auto-update=false` or `CLAUDE_STATUS_AUTO_UPDATE=false`.
 
 ## How It Works
 

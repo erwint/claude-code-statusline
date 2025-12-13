@@ -64,11 +64,13 @@ func main() {
 		}
 	}
 
-	config.Parse()
+	cfg := config.Parse()
 	cost.SetEmbeddedPricing(embeddedPricing)
 
-	// Check for updates once per day (with jitter to avoid thundering herd)
-	go updater.CheckForUpdateDaily(version)
+	// Check for updates once per day if auto-update is enabled (with jitter to avoid thundering herd)
+	if cfg.AutoUpdate {
+		go updater.CheckForUpdateDaily(version)
+	}
 
 	// Read session input from stdin (if available)
 	sess := session.ReadInput()

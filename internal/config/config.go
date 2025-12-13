@@ -12,10 +12,11 @@ import (
 type Config struct {
 	CacheTTL       int
 	NoColor        bool
-	DisplayMode    string
-	InfoMode       string
-	Debug          bool
+	DisplayMode     string
+	InfoMode        string
+	Debug           bool
 	AggregationMode string // "sliding" or "fixed"
+	AutoUpdate      bool
 }
 
 // Global configuration instance
@@ -38,6 +39,7 @@ func Parse() *Config {
 	flag.StringVar(&cfg.InfoMode, "info-mode", getEnv("CLAUDE_STATUS_INFO_MODE", "none"), "Info mode: none|emoji|text")
 	flag.StringVar(&cfg.AggregationMode, "aggregation", getEnv("CLAUDE_STATUS_AGGREGATION", "fixed"), "Cost aggregation: sliding|fixed")
 	flag.BoolVar(&cfg.Debug, "debug", getEnvBool("CLAUDE_STATUS_DEBUG", false), "Enable debug output")
+	flag.BoolVar(&cfg.AutoUpdate, "auto-update", getEnvBool("CLAUDE_STATUS_AUTO_UPDATE", true), "Enable automatic updates (default: true)")
 	flag.Parse()
 	return cfg
 }
