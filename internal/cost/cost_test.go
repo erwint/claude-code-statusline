@@ -585,3 +585,95 @@ func TestUnchangedFileSkipped(t *testing.T) {
 		t.Errorf("cost changed when file was unchanged: %.4f -> %.4f", initialCost, cache.DayCosts["2025-11-29"])
 	}
 }
+
+func TestLargeLogEntry(t *testing.T) {
+	tmpDir := t.TempDir()
+	logFile := filepath.Join(tmpDir, "large.jsonl")
+
+	pricing := &types.PricingData{
+		Models: map[string]types.ModelPricing{
+			"claude-sonnet-4-5": {Input: 3.0, Output: 15.0},
+		},
+	}
+	monthlyCutoff := time.Date(2025, 10, 29, 0, 0, 0, 0, time.UTC)
+
+	// Create a log entry with very large content (>1MB)
+	// This simulates the real-world issue with large Claude Code log entries
+	f, _ := os.Create(logFile)
+
+	// Create a large content field (e.g., a very large tool response)
+	largeContent := make([]byte, 5*1024*1024) // 5MB
+	for i := range largeContent {
+		largeContent[i] = 'x'
+	}
+
+	entry := map[string]interface{}{
+		"timestamp": "2025-11-29T10:00:00Z",
+		"type":      "assistant",
+		"message": map[string]interface{}{
+			"id":    "msg-large",
+			"model": "claude-sonnet-4-5",
+			"usage": map[string]int{
+				"input_tokens":  5000,
+				"output_tokens": 2500,
+			},
+			"content": string(largeContent), // Very large field
+		},
+		"requestId": "req-large",
+	}
+	data, _ := json.Marshal(entry)
+	f.Write(data)
+	f.Write([]byte("\n"))
+
+	// Add a normal entry after to ensure we can continue processing
+	entry2 := map[string]interface{}{
+		"timestamp": "2025-11-29T11:00:00Z",
+		"type":      "assistant",
+		"message": map[string]interface{}{
+			"id":    "msg2",
+			"model": "claude-sonnet-4-5",
+			"usage": map[string]int{
+				"input_tokens":  1000,
+				"output_tokens": 500,
+			},
+		},
+		"requestId": "req2",
+	}
+	data2, _ := json.Marshal(entry2)
+	f.Write(data2)
+	f.Write([]byte("\n"))
+	f.Close()
+
+	cache := &CostCache{
+		DayCosts:          make(map[string]float64),
+		FileState:         make(map[string]FileProcessState),
+		ProcessedMessages: make(map[string]bool),
+	}
+
+	info, _ := os.Stat(logFile)
+	processLogFile(logFile, info, cache, pricing, monthlyCutoff)
+
+	// Should process both entries despite one being very large
+	if len(cache.ProcessedMessages) != 2 {
+		t.Errorf("expected 2 processed messages (including large one), got %d", len(cache.ProcessedMessages))
+	}
+
+	// Cost should include both entries
+	// Large entry: 5000 input ($0.015) + 2500 output ($0.0375) = $0.0525
+	// Normal entry: 1000 input ($0.003) + 500 output ($0.0075) = $0.0105
+	expectedCost := 0.0525 + 0.0105
+	dayCost := cache.DayCosts["2025-11-29"]
+	if dayCost < expectedCost-0.001 || dayCost > expectedCost+0.001 {
+		t.Errorf("expected day cost ~%.4f, got %.4f", expectedCost, dayCost)
+	}
+
+	// Verify file state was updated correctly (processed to end of file)
+	if state, exists := cache.FileState[logFile]; exists {
+		if state.Size != info.Size() || state.Offset != info.Size() {
+			t.Errorf("file state incorrect: size=%d (expected %d), offset=%d (expected %d)",
+				state.Size, info.Size(), state.Offset, info.Size())
+		}
+	} else {
+		t.Error("file state not saved")
+	}
+}

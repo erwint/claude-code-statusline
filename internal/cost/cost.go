@@ -191,63 +191,80 @@ func processLogFile(path string, info os.FileInfo, cache *CostCache, pricing *ty
 		config.DebugLog("Reprocessing modified file: %s", filepath.Base(path))
 	}
 
-	scanner := bufio.NewScanner(file)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024)
-
+	reader := bufio.NewReader(file)
 	bytesRead := offset
 
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		bytesRead += int64(len(line)) + 1 // +1 for newline
-
-		var entry types.LogEntry
-		if err := json.Unmarshal(line, &entry); err != nil {
-			continue
+	for {
+		// ReadBytes automatically grows the buffer for large lines
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			if err == io.EOF {
+				// Process last line if it doesn't end with newline
+				if len(line) > 0 {
+					bytesRead += int64(len(line))
+					processLogEntry(line, cache, pricing, monthlyCutoff)
+				}
+				break
+			}
+			config.DebugLog("Read error for %s at offset %d: %v", filepath.Base(path), bytesRead, err)
+			return
 		}
 
-		// Parse timestamp
-		ts, err := time.Parse(time.RFC3339, entry.Timestamp)
-		if err != nil || ts.Before(monthlyCutoff) {
-			continue
-		}
-
-		// Only process assistant messages with usage data
-		if entry.Type != "assistant" {
-			continue
-		}
-
-		// Deduplicate by message ID + request ID
-		key := entry.Message.ID + ":" + entry.RequestID
-		if key == ":" || cache.ProcessedMessages[key] {
-			continue
-		}
-		cache.ProcessedMessages[key] = true
-
-		// Get token counts
-		inputTokens := entry.Message.Usage.InputTokens
-		outputTokens := entry.Message.Usage.OutputTokens
-		cacheCreation := entry.Message.Usage.CacheCreationInputTokens
-		cacheRead := entry.Message.Usage.CacheReadInputTokens
-
-		if inputTokens == 0 && outputTokens == 0 && cacheCreation == 0 && cacheRead == 0 {
-			continue
-		}
-
-		// Calculate cost
-		cost := calculateCost(entry.Message.Model, inputTokens, outputTokens, cacheCreation, cacheRead, pricing)
-
-		// Add to day bucket (use local time for user's perspective)
-		day := ts.Local().Format("2006-01-02")
-		cache.DayCosts[day] += cost
+		bytesRead += int64(len(line))
+		processLogEntry(line, cache, pricing, monthlyCutoff)
 	}
 
-	// Update file state
+	// Update file state only if we successfully completed
 	cache.FileState[path] = FileProcessState{
 		ModTime: info.ModTime(),
 		Size:    info.Size(),
 		Offset:  bytesRead,
 	}
+}
+
+func processLogEntry(line []byte, cache *CostCache, pricing *types.PricingData, monthlyCutoff time.Time) {
+	// Note: For very large lines, json.Unmarshal will allocate memory temporarily,
+	// but this is better than trying to parse across line boundaries with streaming.
+	// bufio.Reader.ReadBytes automatically grows its buffer, so we can handle any line size.
+	var entry types.LogEntry
+	if err := json.Unmarshal(line, &entry); err != nil {
+		return
+	}
+
+	// Parse timestamp
+	ts, err := time.Parse(time.RFC3339, entry.Timestamp)
+	if err != nil || ts.Before(monthlyCutoff) {
+		return
+	}
+
+	// Only process assistant messages with usage data
+	if entry.Type != "assistant" {
+		return
+	}
+
+	// Deduplicate by message ID + request ID
+	key := entry.Message.ID + ":" + entry.RequestID
+	if key == ":" || cache.ProcessedMessages[key] {
+		return
+	}
+	cache.ProcessedMessages[key] = true
+
+	// Get token counts
+	inputTokens := entry.Message.Usage.InputTokens
+	outputTokens := entry.Message.Usage.OutputTokens
+	cacheCreation := entry.Message.Usage.CacheCreationInputTokens
+	cacheRead := entry.Message.Usage.CacheReadInputTokens
+
+	if inputTokens == 0 && outputTokens == 0 && cacheCreation == 0 && cacheRead == 0 {
+		return
+	}
+
+	// Calculate cost
+	cost := calculateCost(entry.Message.Model, inputTokens, outputTokens, cacheCreation, cacheRead, pricing)
+
+	// Add to day bucket (use local time for user's perspective)
+	day := ts.Local().Format("2006-01-02")
+	cache.DayCosts[day] += cost
 }
 
 func aggregateStats(cache *CostCache, now time.Time) *types.TokenStats {

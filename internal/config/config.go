@@ -37,7 +37,7 @@ func Parse() *Config {
 	flag.StringVar(&cfg.DisplayMode, "display-mode", getEnv("CLAUDE_STATUS_DISPLAY_MODE", "colors"), "Display mode: colors|minimal|background")
 	flag.StringVar(&cfg.InfoMode, "info-mode", getEnv("CLAUDE_STATUS_INFO_MODE", "none"), "Info mode: none|emoji|text")
 	flag.StringVar(&cfg.AggregationMode, "aggregation", getEnv("CLAUDE_STATUS_AGGREGATION", "fixed"), "Cost aggregation: sliding|fixed")
-	flag.BoolVar(&cfg.Debug, "debug", false, "Enable debug output")
+	flag.BoolVar(&cfg.Debug, "debug", getEnvBool("CLAUDE_STATUS_DEBUG", false), "Enable debug output")
 	flag.Parse()
 	return cfg
 }
@@ -54,6 +54,13 @@ func getEnvInt(key string, defaultVal int) int {
 		if i, err := strconv.Atoi(val); err == nil {
 			return i
 		}
+	}
+	return defaultVal
+}
+
+func getEnvBool(key string, defaultVal bool) bool {
+	if val := os.Getenv(key); val != "" {
+		return val == "true" || val == "1" || val == "yes"
 	}
 	return defaultVal
 }
