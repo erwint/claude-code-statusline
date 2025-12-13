@@ -30,7 +30,7 @@ const (
 )
 
 // FormatStatusLine builds the complete status line output
-func FormatStatusLine(session *types.SessionInput, git types.GitInfo, usage *types.UsageCache, stats *types.TokenStats, subscription, tier string) string {
+func FormatStatusLine(session *types.SessionInput, git types.GitInfo, usage *types.UsageCache, stats *types.TokenStats, subscription, tier string, isApiBilling bool) string {
 	cfg := config.Get()
 	var parts []string
 
@@ -105,7 +105,12 @@ func FormatStatusLine(session *types.SessionInput, git types.GitInfo, usage *typ
 		// 5-hour window
 		usageColor := colorGreen
 		usageBg := bgGreen
-		if usage.UsagePercent >= 90 {
+
+		// Grey out usage display when on API billing
+		if isApiBilling {
+			usageColor = colorGray
+			usageBg = bgBlue
+		} else if usage.UsagePercent >= 90 {
 			usageColor = colorRed
 			usageBg = bgRed
 		} else if usage.UsagePercent >= 75 {
@@ -117,7 +122,7 @@ func FormatStatusLine(session *types.SessionInput, git types.GitInfo, usage *typ
 
 		// Add projection arrow if significantly off track
 		if !usage.ResetTime.IsZero() && usage.UsagePercent < 100 {
-			projection := calculateProjection(usage.UsagePercent, usage.ResetTime, 5*time.Hour)
+			projection := calculateProjection(usage.UsagePercent, usage.ResetTime, 5*time.Hour, usageColor)
 			if projection != "" {
 				usagePart += projection
 			}
@@ -144,7 +149,12 @@ func FormatStatusLine(session *types.SessionInput, git types.GitInfo, usage *typ
 		if usage.SevenDayPercent > 0 && !usage.SevenDayResetTime.IsZero() {
 			sevenDayColor := colorGreen
 			sevenDayBg := bgGreen
-			if usage.SevenDayPercent >= 90 {
+
+			// Grey out usage display when on API billing
+			if isApiBilling {
+				sevenDayColor = colorGray
+				sevenDayBg = bgBlue
+			} else if usage.SevenDayPercent >= 90 {
 				sevenDayColor = colorRed
 				sevenDayBg = bgRed
 			} else if usage.SevenDayPercent >= 75 {
@@ -156,7 +166,7 @@ func FormatStatusLine(session *types.SessionInput, git types.GitInfo, usage *typ
 
 			// Add projection arrow for 7-day window
 			if usage.SevenDayPercent < 100 {
-				projection := calculateProjection(usage.SevenDayPercent, usage.SevenDayResetTime, 7*24*time.Hour)
+				projection := calculateProjection(usage.SevenDayPercent, usage.SevenDayResetTime, 7*24*time.Hour, sevenDayColor)
 				if projection != "" {
 					sevenDayPart += projection
 				}
@@ -267,7 +277,7 @@ func formatDurationDays(d time.Duration) string {
 	return fmt.Sprintf("%dm", minutes)
 }
 
-func calculateProjection(usagePercent float64, resetTime time.Time, totalWindow time.Duration) string {
+func calculateProjection(usagePercent float64, resetTime time.Time, totalWindow time.Duration, baseColor string) string {
 	// Don't show projection at 100% - we show reset time instead
 	if usagePercent >= 100 {
 		return ""
@@ -295,9 +305,14 @@ func calculateProjection(usagePercent float64, resetTime time.Time, totalWindow 
 
 	// Only show if outside the ±5% range
 	if usagePercent > upperBound {
-		return " " + colorRed + "↑" + colorReset // trending over
+		// Trending over: use red arrow (unless API billing)
+		if baseColor == colorGray {
+			return " ↑" // Plain arrow, parent will colorize grey
+		}
+		return " " + colorRed + "↑" + baseColor // Red arrow, then back to base color
 	} else if usagePercent < lowerBound {
-		return " " + colorGreen + "↓" + colorReset // trending under
+		// Trending under: use base color arrow
+		return " ↓" // Plain arrow, parent will colorize with base color
 	}
 
 	return ""

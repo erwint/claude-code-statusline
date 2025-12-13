@@ -55,7 +55,7 @@ func TestFullStatusLine(t *testing.T) {
 			MonthlyCost: 350.75,
 		}
 
-		result := FormatStatusLine(session, gitInfo, usage, stats, "pro", "max_5x")
+		result := FormatStatusLine(session, gitInfo, usage, stats, "pro", "max_5x", false)
 
 		// Verify all parts are present
 		checks := map[string]bool{
@@ -150,7 +150,7 @@ func TestGitStates(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			withConfig(t, cfg, func() {
-				result := FormatStatusLine(nil, tt.gitInfo, nil, &types.TokenStats{}, "", "")
+				result := FormatStatusLine(nil, tt.gitInfo, nil, &types.TokenStats{}, "", "", false)
 
 				for _, want := range tt.contains {
 					if !strings.Contains(result, want) {
@@ -266,7 +266,7 @@ func TestUsageStates(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			withConfig(t, cfg, func() {
-				result := FormatStatusLine(nil, types.GitInfo{}, tt.usage, &types.TokenStats{}, "", "")
+				result := FormatStatusLine(nil, types.GitInfo{}, tt.usage, &types.TokenStats{}, "", "", false)
 
 				for _, want := range tt.contains {
 					if !strings.Contains(result, want) {
@@ -335,7 +335,7 @@ func TestCostScenarios(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			withConfig(t, cfg, func() {
-				result := FormatStatusLine(nil, types.GitInfo{}, nil, tt.stats, "", "")
+				result := FormatStatusLine(nil, types.GitInfo{}, nil, tt.stats, "", "", false)
 
 				for _, want := range tt.contains {
 					if !strings.Contains(result, want) {
@@ -399,7 +399,7 @@ func TestModelVariations(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			withConfig(t, cfg, func() {
-				result := FormatStatusLine(tt.session, types.GitInfo{}, nil, &types.TokenStats{}, "", "")
+				result := FormatStatusLine(tt.session, types.GitInfo{}, nil, &types.TokenStats{}, "", "", false)
 				if !strings.Contains(result, tt.contains) {
 					t.Errorf("Expected to contain %q, got: %q", tt.contains, result)
 				}
@@ -451,7 +451,7 @@ func TestSubscriptionTierCombinations(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			withConfig(t, cfg, func() {
-				result := FormatStatusLine(nil, types.GitInfo{}, nil, &types.TokenStats{}, tt.subscription, tt.tier)
+				result := FormatStatusLine(nil, types.GitInfo{}, nil, &types.TokenStats{}, tt.subscription, tt.tier, false)
 				if !strings.Contains(result, tt.contains) {
 					t.Errorf("Expected to contain %q, got: %q", tt.contains, result)
 				}
@@ -515,7 +515,7 @@ func TestDisplayModes(t *testing.T) {
 			}
 
 			withConfig(t, cfg, func() {
-				result := FormatStatusLine(session, gitInfo, nil, &types.TokenStats{}, "", "")
+				result := FormatStatusLine(session, gitInfo, nil, &types.TokenStats{}, "", "", false)
 
 				if result == "" {
 					t.Error("Expected non-empty output")
@@ -580,7 +580,7 @@ func TestInfoModes(t *testing.T) {
 			}
 
 			withConfig(t, cfg, func() {
-				result := FormatStatusLine(nil, gitInfo, nil, &types.TokenStats{}, "", "")
+				result := FormatStatusLine(nil, gitInfo, nil, &types.TokenStats{}, "", "", false)
 
 				for _, want := range tt.contains {
 					if !strings.Contains(result, want) {
@@ -752,7 +752,7 @@ func TestCalculateProjection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resetTime := time.Now().Add(tt.remaining)
-			result := calculateProjection(tt.usagePercent, resetTime, 5*time.Hour)
+			result := calculateProjection(tt.usagePercent, resetTime, 5*time.Hour, colorGreen)
 
 			if tt.expectArrow {
 				if result == "" {
@@ -785,7 +785,7 @@ func TestEdgeCases(t *testing.T) {
 
 	t.Run("all nil inputs", func(t *testing.T) {
 		withConfig(t, cfg, func() {
-			result := FormatStatusLine(nil, types.GitInfo{}, nil, &types.TokenStats{}, "", "")
+			result := FormatStatusLine(nil, types.GitInfo{}, nil, &types.TokenStats{}, "", "", false)
 			// Should at least contain directory
 			if result == "" {
 				t.Error("Expected non-empty result with all nil inputs")
@@ -796,7 +796,7 @@ func TestEdgeCases(t *testing.T) {
 	t.Run("session with nil model", func(t *testing.T) {
 		withConfig(t, cfg, func() {
 			session := &types.SessionInput{Model: nil}
-			result := FormatStatusLine(session, types.GitInfo{}, nil, &types.TokenStats{}, "", "")
+			result := FormatStatusLine(session, types.GitInfo{}, nil, &types.TokenStats{}, "", "", false)
 			if result == "" {
 				t.Error("Expected non-empty result")
 			}
@@ -809,7 +809,7 @@ func TestEdgeCases(t *testing.T) {
 				UsagePercent: 50.0,
 				ResetTime:    time.Time{},
 			}
-			result := FormatStatusLine(nil, types.GitInfo{}, usage, &types.TokenStats{}, "", "")
+			result := FormatStatusLine(nil, types.GitInfo{}, usage, &types.TokenStats{}, "", "", false)
 			// Should show percentage but no time
 			if !strings.Contains(result, "50%") {
 				t.Error("Expected usage percentage")
@@ -823,7 +823,7 @@ func TestEdgeCases(t *testing.T) {
 				UsagePercent: 50.0,
 				ResetTime:    time.Now().Add(-1 * time.Hour), // In the past
 			}
-			result := FormatStatusLine(nil, types.GitInfo{}, usage, &types.TokenStats{}, "", "")
+			result := FormatStatusLine(nil, types.GitInfo{}, usage, &types.TokenStats{}, "", "", false)
 			// Should not crash
 			if result == "" {
 				t.Error("Expected non-empty result")
@@ -837,7 +837,7 @@ func TestEdgeCases(t *testing.T) {
 				IsRepo: true,
 				Branch: "feature/very-long-branch-name-with-many-characters-that-goes-on-and-on",
 			}
-			result := FormatStatusLine(nil, gitInfo, nil, &types.TokenStats{}, "", "")
+			result := FormatStatusLine(nil, gitInfo, nil, &types.TokenStats{}, "", "", false)
 			if !strings.Contains(result, "feature/very-long-branch-name") {
 				t.Error("Expected branch name in output")
 			}

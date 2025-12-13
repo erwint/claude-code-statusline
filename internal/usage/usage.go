@@ -17,10 +17,17 @@ import (
 )
 
 // GetUsageAndSubscription retrieves usage data and subscription info
-func GetUsageAndSubscription() (*types.UsageCache, string, string) {
+// Returns: usage data, subscription type, tier, and whether on API billing
+func GetUsageAndSubscription() (*types.UsageCache, string, string, bool) {
 	cacheFile := getCacheFile("usage.json")
 	subscription := ""
 	tier := ""
+	isApiBilling := false
+
+	// Detect API billing: check if ANTHROPIC_API_KEY is set (primary indicator)
+	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+		isApiBilling = true
+	}
 
 	// Get subscription from credentials
 	creds := getCredentials()
@@ -34,7 +41,7 @@ func GetUsageAndSubscription() (*types.UsageCache, string, string) {
 	// Check cache
 	if cache, valid := loadCache(cacheFile, cfg.CacheTTL); valid {
 		config.DebugLog("Using cached usage: %.1f%%", cache.UsagePercent)
-		return cache, subscription, tier
+		return cache, subscription, tier, isApiBilling
 	}
 
 	// Fetch from API
@@ -43,15 +50,15 @@ func GetUsageAndSubscription() (*types.UsageCache, string, string) {
 		config.DebugLog("API error: %v", err)
 		// Return cached data even if expired, or nil
 		if cache, _ := loadCacheIgnoreExpiry(cacheFile); cache != nil {
-			return cache, subscription, tier
+			return cache, subscription, tier, isApiBilling
 		}
-		return nil, subscription, tier
+		return nil, subscription, tier, isApiBilling
 	}
 
 	// Save cache
 	saveCache(cacheFile, usage)
 	config.DebugLog("Fetched usage: %.1f%%", usage.UsagePercent)
-	return usage, subscription, tier
+	return usage, subscription, tier, isApiBilling
 }
 
 func getCredentials() *types.Credentials {
