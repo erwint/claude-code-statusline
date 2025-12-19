@@ -271,12 +271,12 @@ func TestUsageStates(t *testing.T) {
 				for _, want := range tt.contains {
 					// Handle arrow checks flexibly (old arrows replaced with new ones)
 					if want == "↑" {
-						if !strings.Contains(result, "⇈") && !strings.Contains(result, "⬆") {
-							t.Errorf("Expected to contain up arrow (⇈ or ⬆), got: %q", result)
+						if !strings.Contains(result, "⇈") && !strings.Contains(result, "⮝") {
+							t.Errorf("Expected to contain up arrow (⇈ or ⮝), got: %q", result)
 						}
 					} else if want == "↓" {
-						if !strings.Contains(result, "⇊") && !strings.Contains(result, "⬇") {
-							t.Errorf("Expected to contain down arrow (⇊ or ⬇), got: %q", result)
+						if !strings.Contains(result, "⇊") && !strings.Contains(result, "⮟") {
+							t.Errorf("Expected to contain down arrow (⇊ or ⮟), got: %q", result)
 						}
 					} else {
 						if !strings.Contains(result, want) {
@@ -288,11 +288,11 @@ func TestUsageStates(t *testing.T) {
 				for _, notWant := range tt.notContains {
 					// Handle arrow checks flexibly
 					if notWant == "↑" {
-						if strings.Contains(result, "⇈") || strings.Contains(result, "⬆") {
+						if strings.Contains(result, "⇈") || strings.Contains(result, "⮝") {
 							t.Errorf("Expected NOT to contain up arrow, got: %q", result)
 						}
 					} else if notWant == "↓" {
-						if strings.Contains(result, "⇊") || strings.Contains(result, "⬇") {
+						if strings.Contains(result, "⇊") || strings.Contains(result, "⮟") {
 							t.Errorf("Expected NOT to contain down arrow, got: %q", result)
 						}
 					} else {
@@ -781,11 +781,11 @@ func TestCalculateProjection(t *testing.T) {
 					t.Errorf("Expected arrow, got empty string (usage: %.1f%%, remaining: %v)",
 						tt.usagePercent, tt.remaining)
 				}
-				if tt.expectUp && !(strings.Contains(result, "⇈") || strings.Contains(result, "⬆")) {
-					t.Errorf("Expected up arrow (⇈ or ⬆), got %q", result)
+				if tt.expectUp && !(strings.Contains(result, "⇈") || strings.Contains(result, "⮝")) {
+					t.Errorf("Expected up arrow (⇈ or ⮝), got %q", result)
 				}
-				if !tt.expectUp && !(strings.Contains(result, "⇊") || strings.Contains(result, "⬇")) {
-					t.Errorf("Expected down arrow (⇊ or ⬇), got %q", result)
+				if !tt.expectUp && !(strings.Contains(result, "⇊") || strings.Contains(result, "⮟")) {
+					t.Errorf("Expected down arrow (⇊ or ⮟), got %q", result)
 				}
 			} else {
 				if result != "" {
