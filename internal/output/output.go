@@ -299,23 +299,41 @@ func calculateProjection(usagePercent float64, resetTime time.Time, totalWindow 
 	// Expected usage at this point: elapsed / total * 100
 	expectedPercent := (float64(elapsed) / float64(totalWindow)) * 100
 
-	// Calculate ±5% range of expected
-	lowerBound := expectedPercent * 0.95
-	upperBound := expectedPercent * 1.05
+	// Calculate deviation ranges
+	lowerBound5 := expectedPercent * 0.95
+	upperBound5 := expectedPercent * 1.05
+	lowerBound25 := expectedPercent * 0.75
+	upperBound25 := expectedPercent * 1.25
 
-	// Only show if outside the ±5% range
-	if usagePercent > upperBound {
-		// Trending over: use red arrow (unless API billing)
-		if baseColor == colorGray {
-			return " ↑" // Plain arrow, parent will colorize grey
-		}
-		return " " + colorRed + "↑" + baseColor // Red arrow, then back to base color
-	} else if usagePercent < lowerBound {
-		// Trending under: use base color arrow
-		return " ↓" // Plain arrow, parent will colorize with base color
+	// Determine arrow based on deviation
+	var arrow string
+	if usagePercent > upperBound25 {
+		// >25% over: heavy arrow
+		arrow = " ⬆"
+	} else if usagePercent > upperBound5 {
+		// 5-25% over: double line arrow
+		arrow = " ⇈"
+	} else if usagePercent < lowerBound25 {
+		// >25% under: heavy arrow
+		arrow = " ⬇"
+	} else if usagePercent < lowerBound5 {
+		// 5-25% under: double line arrow
+		arrow = " ⇊"
+	} else {
+		// Within ±5%: on track, no arrow
+		return ""
 	}
 
-	return ""
+	// Color the arrow
+	if baseColor == colorGray {
+		return arrow // Plain arrow, parent will colorize grey
+	} else if usagePercent > upperBound5 {
+		// Trending over: use red
+		return " " + colorRed + strings.TrimSpace(arrow) + baseColor
+	} else {
+		// Trending under: use base color (green)
+		return arrow
+	}
 }
 
 func shortenTier(tier string) string {
