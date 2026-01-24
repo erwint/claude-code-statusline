@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/erwint/claude-code-statusline/internal/config"
+	"github.com/erwint/claude-code-statusline/internal/session"
+	"github.com/erwint/claude-code-statusline/internal/transcript"
 	"github.com/erwint/claude-code-statusline/internal/types"
 )
 
@@ -30,7 +33,7 @@ const (
 )
 
 // FormatStatusLine builds the complete status line output
-func FormatStatusLine(session *types.SessionInput, git types.GitInfo, usage *types.UsageCache, stats *types.TokenStats, subscription, tier string, isApiBilling bool) string {
+func FormatStatusLine(sess *types.SessionInput, git types.GitInfo, usage *types.UsageCache, stats *types.TokenStats, subscription, tier string, isApiBilling bool, transcriptData *types.TranscriptData) string {
 	cfg := config.Get()
 	var parts []string
 
@@ -71,12 +74,21 @@ func FormatStatusLine(session *types.SessionInput, git types.GitInfo, usage *typ
 	}
 
 	// Model info (from stdin session)
-	if session != nil && session.Model != nil {
-		modelName := session.Model.DisplayName
+	if sess != nil && sess.Model != nil {
+		modelName := sess.Model.DisplayName
 		if modelName == "" {
-			modelName = formatModelName(session.Model.ID)
+			modelName = formatModelName(sess.Model.ID)
 		}
 		parts = append(parts, colorize(modelName, colorCyan, bgCyan, cfg))
+	}
+
+	// Context window usage bar
+	if cfg.ShowContext && sess != nil && sess.ContextWindow != nil {
+		contextPct := session.GetContextPercent(sess)
+		if contextPct > 0 || sess.ContextWindow.Size > 0 {
+			contextPart := formatContextBar(contextPct, cfg)
+			parts = append(parts, contextPart)
+		}
 	}
 
 	// Subscription type with tier
@@ -188,7 +200,7 @@ func FormatStatusLine(session *types.SessionInput, git types.GitInfo, usage *typ
 		}
 	}
 
-	// Add info mode prefixes
+	// Add info mode prefixes to main status line
 	if cfg.InfoMode == "emoji" {
 		for i, part := range parts {
 			switch i {
@@ -213,7 +225,50 @@ func FormatStatusLine(session *types.SessionInput, git types.GitInfo, usage *typ
 		}
 	}
 
-	return strings.Join(parts, " | ")
+	// Build the main status line
+	lines := []string{strings.Join(parts, " | ")}
+
+	// Build the activity line (tools, agents, todos, duration)
+	var activityParts []string
+
+	// Tool activity
+	if cfg.ShowTools && transcriptData != nil {
+		toolPart := formatToolsActivity(transcriptData, cfg)
+		if toolPart != "" {
+			activityParts = append(activityParts, toolPart)
+		}
+	}
+
+	// Agent activity
+	if cfg.ShowAgents && transcriptData != nil {
+		agentPart := formatAgentsActivity(transcriptData, cfg)
+		if agentPart != "" {
+			activityParts = append(activityParts, agentPart)
+		}
+	}
+
+	// Todo progress
+	if cfg.ShowTodos && transcriptData != nil {
+		todoPart := formatTodoProgress(transcriptData, cfg)
+		if todoPart != "" {
+			activityParts = append(activityParts, todoPart)
+		}
+	}
+
+	// Session duration
+	if cfg.ShowDuration && transcriptData != nil {
+		duration := transcript.GetSessionDuration(transcriptData)
+		if duration != "" {
+			activityParts = append(activityParts, colorize(duration, colorGray, bgBlue, cfg))
+		}
+	}
+
+	// Add activity line if there's anything to show
+	if len(activityParts) > 0 {
+		lines = append(lines, strings.Join(activityParts, " | "))
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func colorize(text, fgColor, bgColor string, cfg *config.Config) string {
@@ -359,4 +414,177 @@ func shortenTier(tier string) string {
 	tier = strings.TrimPrefix(tier, "claude_")
 
 	return tier
+}
+
+// formatContextBar renders a visual context window usage bar
+func formatContextBar(percent float64, cfg *config.Config) string {
+	const barWidth = 10
+
+	// Determine color based on usage
+	var fgColor, bgColor string
+	if percent >= 85 {
+		fgColor, bgColor = colorRed, bgRed
+	} else if percent >= 70 {
+		fgColor, bgColor = colorYellow, bgYellow
+	} else {
+		fgColor, bgColor = colorGreen, bgGreen
+	}
+
+	// Build the bar
+	filled := int(percent / 100 * barWidth)
+	if filled > barWidth {
+		filled = barWidth
+	}
+	if filled < 0 {
+		filled = 0
+	}
+
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+	text := fmt.Sprintf("[%s] %.0f%%", bar, percent)
+
+	return colorize(text, fgColor, bgColor, cfg)
+}
+
+// formatToolsActivity renders running and completed tools
+func formatToolsActivity(data *types.TranscriptData, cfg *config.Config) string {
+	if data == nil {
+		return ""
+	}
+
+	var parts []string
+
+	// Show running tools (up to 2)
+	running := transcript.GetRunningTools(data)
+	for i, tool := range running {
+		if i >= 2 {
+			break
+		}
+		toolStr := colorize("◐", colorYellow, bgYellow, cfg) + " " + colorize(tool.Name, colorCyan, bgCyan, cfg)
+		if tool.Target != "" {
+			toolStr += " " + colorize(tool.Target, colorGray, bgBlue, cfg)
+		}
+		parts = append(parts, toolStr)
+	}
+
+	// Show completed tool counts
+	counts := transcript.GetCompletedToolCounts(data)
+	if len(counts) > 0 {
+		// Sort by count descending
+		type toolCount struct {
+			name  string
+			count int
+		}
+		var sorted []toolCount
+		for name, count := range counts {
+			sorted = append(sorted, toolCount{name, count})
+		}
+		sort.Slice(sorted, func(i, j int) bool {
+			return sorted[i].count > sorted[j].count
+		})
+
+		// Show top 4
+		var completedParts []string
+		for i, tc := range sorted {
+			if i >= 4 {
+				break
+			}
+			if tc.count > 1 {
+				completedParts = append(completedParts, fmt.Sprintf("%s×%d", tc.name, tc.count))
+			} else {
+				completedParts = append(completedParts, tc.name)
+			}
+		}
+
+		if len(completedParts) > 0 {
+			completedStr := colorize("✓", colorGreen, bgGreen, cfg) + " " + strings.Join(completedParts, ", ")
+			parts = append(parts, completedStr)
+		}
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return strings.Join(parts, " | ")
+}
+
+// formatAgentsActivity renders running agents
+func formatAgentsActivity(data *types.TranscriptData, cfg *config.Config) string {
+	if data == nil {
+		return ""
+	}
+
+	running := transcript.GetRunningAgents(data)
+	if len(running) == 0 {
+		return ""
+	}
+
+	var parts []string
+	for i, agent := range running {
+		if i >= 2 {
+			break
+		}
+		agentStr := colorize("◐", colorYellow, bgYellow, cfg) + " " + colorize(agent.Type, colorMagenta, bgMagenta, cfg)
+		if agent.Description != "" {
+			agentStr += ": " + colorize(agent.Description, colorGray, bgBlue, cfg)
+		}
+		// Show elapsed time
+		elapsed := time.Since(agent.StartTime)
+		if elapsed > 0 {
+			agentStr += " " + colorize("("+formatShortDuration(elapsed)+")", colorGray, bgBlue, cfg)
+		}
+		parts = append(parts, agentStr)
+	}
+
+	return strings.Join(parts, " | ")
+}
+
+// formatTodoProgress renders todo progress
+func formatTodoProgress(data *types.TranscriptData, cfg *config.Config) string {
+	if data == nil {
+		return ""
+	}
+
+	completed, total := transcript.GetTodoProgress(data)
+	if total == 0 {
+		return ""
+	}
+
+	progress := fmt.Sprintf("(%d/%d)", completed, total)
+
+	// Check if all complete
+	if completed == total {
+		return colorize("✓", colorGreen, bgGreen, cfg) + " " + colorize("Done "+progress, colorGreen, bgGreen, cfg)
+	}
+
+	// Show current in-progress todo
+	current := transcript.GetCurrentTodo(data)
+	if current != nil {
+		subject := current.Subject
+		if len(subject) > 30 {
+			subject = subject[:27] + "..."
+		}
+		return colorize("▸", colorYellow, bgYellow, cfg) + " " + subject + " " + colorize(progress, colorGray, bgBlue, cfg)
+	}
+
+	// Just show progress
+	return colorize("▸", colorYellow, bgYellow, cfg) + " " + colorize(progress, colorGray, bgBlue, cfg)
+}
+
+// formatShortDuration formats duration for display (compact)
+func formatShortDuration(d time.Duration) string {
+	if d < time.Second {
+		return "<1s"
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	mins := int(d.Minutes())
+	secs := int(d.Seconds()) % 60
+	if mins < 60 {
+		return fmt.Sprintf("%dm%ds", mins, secs)
+	}
+	hours := mins / 60
+	mins = mins % 60
+	return fmt.Sprintf("%dh%dm", hours, mins)
 }

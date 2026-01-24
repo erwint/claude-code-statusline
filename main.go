@@ -10,6 +10,8 @@ import (
 	"github.com/erwint/claude-code-statusline/internal/git"
 	"github.com/erwint/claude-code-statusline/internal/output"
 	"github.com/erwint/claude-code-statusline/internal/session"
+	"github.com/erwint/claude-code-statusline/internal/transcript"
+	"github.com/erwint/claude-code-statusline/internal/types"
 	"github.com/erwint/claude-code-statusline/internal/updater"
 	"github.com/erwint/claude-code-statusline/internal/usage"
 )
@@ -75,12 +77,18 @@ func main() {
 	// Read session input from stdin (if available)
 	sess := session.ReadInput()
 
+	// Parse transcript if path provided
+	var transcriptData *types.TranscriptData
+	if sess != nil && sess.TranscriptPath != "" {
+		transcriptData = transcript.Parse(sess.TranscriptPath)
+	}
+
 	// Get all the status components
 	gitInfo := git.GetInfo()
 	usageData, subscription, tier, isApiBilling := usage.GetUsageAndSubscription()
 	tokenStats := cost.GetTokenStats()
 
 	// Format and output
-	out := output.FormatStatusLine(sess, gitInfo, usageData, tokenStats, subscription, tier, isApiBilling)
+	out := output.FormatStatusLine(sess, gitInfo, usageData, tokenStats, subscription, tier, isApiBilling, transcriptData)
 	fmt.Print(out)
 }

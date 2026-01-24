@@ -8,9 +8,14 @@ A fast, lightweight statusline for [Claude Code](https://claude.ai/code) showing
 
 - **Git status**: branch, modified/staged/untracked indicators, ahead/behind
 - **Model**: current Claude model in use
+- **Context window**: visual usage bar with color-coded thresholds
 - **Subscription**: plan type and rate limit tier
 - **Costs**: daily/weekly/monthly token costs from your usage logs
 - **API usage**: current utilization % and time until reset
+- **Tool activity**: running tools with spinner, completed tool counts
+- **Agent tracking**: subagent status with description and elapsed time
+- **Todo progress**: current task and completion count
+- **Session duration**: time since session started
 
 ## Installation
 
@@ -78,6 +83,11 @@ The install script automatically configures Claude Code by adding to `~/.claude/
 | `CLAUDE_STATUS_AGGREGATION` | `fixed` | Cost aggregation: `fixed` or `sliding` |
 | `CLAUDE_STATUS_AUTO_UPDATE` | `true` | Enable automatic daily update checks |
 | `CLAUDE_STATUS_DEBUG` | `false` | Enable debug logging to `/tmp/claude-statusline.log` |
+| `CLAUDE_STATUS_CONTEXT` | `true` | Show context window usage bar |
+| `CLAUDE_STATUS_TOOLS` | `true` | Show tool activity |
+| `CLAUDE_STATUS_AGENTS` | `true` | Show agent activity |
+| `CLAUDE_STATUS_TODOS` | `true` | Show todo progress |
+| `CLAUDE_STATUS_DURATION` | `true` | Show session duration |
 
 **Aggregation modes:**
 - `fixed`: Calendar periods - today, this week (Mon-Sun), this month (1st onwards)
@@ -93,6 +103,11 @@ The install script automatically configures Claude Code by adding to `~/.claude/
 --aggregation <mode>    fixed|sliding (default: fixed)
 --auto-update           Enable automatic daily updates (default: true)
 --debug                 Enable debug logging to /tmp/claude-statusline.log
+--show-context          Show context window usage (default: true)
+--show-tools            Show tool activity (default: true)
+--show-agents           Show agent activity (default: true)
+--show-todos            Show todo progress (default: true)
+--show-duration         Show session duration (default: true)
 --version               Show version info
 --update                Download and install the latest version
 ```
@@ -102,10 +117,11 @@ The install script automatically configures Claude Code by adding to `~/.claude/
 ## How It Works
 
 1. **Git info**: Runs `git` commands to get branch and status
-2. **Model**: Receives current model via stdin from Claude Code
+2. **Model & context**: Receives current model and context window via stdin JSON from Claude Code
 3. **Credentials**: Reads from `~/.claude/credentials.json`, falls back to system keychain
 4. **API usage**: Fetches from Anthropic's OAuth API (cached)
 5. **Costs**: Parses `~/.claude/projects/*/*.jsonl` logs (incremental, cached)
+6. **Activity**: Parses transcript JSONL for tools, agents, todos, and session start
 
 ## Supported Platforms
 
@@ -117,7 +133,7 @@ Pre-built binaries are available for:
 
 ## Acknowledgments
 
-Inspired by [gabriel-dehan/claude_monitor_statusline](https://github.com/gabriel-dehan/claude_monitor_statusline).
+Inspired by [gabriel-dehan/claude_monitor_statusline](https://github.com/gabriel-dehan/claude_monitor_statusline) and [jarrodwatts/claude-hud](https://github.com/jarrodwatts/claude-hud).
 
 ## License
 

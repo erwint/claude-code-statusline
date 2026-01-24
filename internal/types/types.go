@@ -80,9 +80,61 @@ type TokenStats struct {
 
 // SessionInput is the JSON input from Claude Code via stdin
 type SessionInput struct {
-	Model     *SessionModel `json:"model"`
-	SessionID string        `json:"session_id"`
-	Cwd       string        `json:"cwd"`
+	Model          *SessionModel  `json:"model"`
+	SessionID      string         `json:"session_id"`
+	Cwd            string         `json:"cwd"`
+	TranscriptPath string         `json:"transcript_path"`
+	ContextWindow  *ContextWindow `json:"context_window"`
+}
+
+// ContextWindow represents context usage from Claude Code
+type ContextWindow struct {
+	Size             int            `json:"context_window_size"`
+	CurrentUsage     *ContextUsage  `json:"current_usage"`
+	UsedPercentage   *float64       `json:"used_percentage"`
+	RemainingPercent *float64       `json:"remaining_percentage"`
+}
+
+// ContextUsage holds token counts for current usage
+type ContextUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+}
+
+// ToolEntry tracks a tool invocation from transcript
+type ToolEntry struct {
+	ID        string
+	Name      string
+	Target    string // e.g., file path for Read/Edit
+	Status    string // "running" | "completed" | "error"
+	StartTime time.Time
+	EndTime   time.Time
+}
+
+// AgentEntry tracks a subagent (Task tool) from transcript
+type AgentEntry struct {
+	ID          string
+	Type        string // "Explore", "Plan", etc.
+	Description string
+	Model       string
+	Status      string // "running" | "completed"
+	StartTime   time.Time
+	EndTime     time.Time
+}
+
+// TodoItem tracks a todo from TodoWrite
+type TodoItem struct {
+	Subject string
+	Status  string // "pending" | "in_progress" | "completed"
+}
+
+// TranscriptData holds parsed transcript information
+type TranscriptData struct {
+	Tools        []ToolEntry
+	Agents       []AgentEntry
+	Todos        []TodoItem
+	SessionStart time.Time
 }
 
 // SessionModel contains model identification

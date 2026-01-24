@@ -55,7 +55,7 @@ func TestFullStatusLine(t *testing.T) {
 			MonthlyCost: 350.75,
 		}
 
-		result := FormatStatusLine(session, gitInfo, usage, stats, "pro", "max_5x", false)
+		result := FormatStatusLine(session, gitInfo, usage, stats, "pro", "max_5x", false, nil)
 
 		// Verify all parts are present
 		checks := map[string]bool{
@@ -150,7 +150,7 @@ func TestGitStates(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			withConfig(t, cfg, func() {
-				result := FormatStatusLine(nil, tt.gitInfo, nil, &types.TokenStats{}, "", "", false)
+				result := FormatStatusLine(nil, tt.gitInfo, nil, &types.TokenStats{}, "", "", false, nil)
 
 				for _, want := range tt.contains {
 					if !strings.Contains(result, want) {
@@ -266,7 +266,7 @@ func TestUsageStates(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			withConfig(t, cfg, func() {
-				result := FormatStatusLine(nil, types.GitInfo{}, tt.usage, &types.TokenStats{}, "", "", false)
+				result := FormatStatusLine(nil, types.GitInfo{}, tt.usage, &types.TokenStats{}, "", "", false, nil)
 
 				for _, want := range tt.contains {
 					// Handle arrow checks flexibly (old arrows replaced with new ones)
@@ -357,7 +357,7 @@ func TestCostScenarios(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			withConfig(t, cfg, func() {
-				result := FormatStatusLine(nil, types.GitInfo{}, nil, tt.stats, "", "", false)
+				result := FormatStatusLine(nil, types.GitInfo{}, nil, tt.stats, "", "", false, nil)
 
 				for _, want := range tt.contains {
 					if !strings.Contains(result, want) {
@@ -421,7 +421,7 @@ func TestModelVariations(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			withConfig(t, cfg, func() {
-				result := FormatStatusLine(tt.session, types.GitInfo{}, nil, &types.TokenStats{}, "", "", false)
+				result := FormatStatusLine(tt.session, types.GitInfo{}, nil, &types.TokenStats{}, "", "", false, nil)
 				if !strings.Contains(result, tt.contains) {
 					t.Errorf("Expected to contain %q, got: %q", tt.contains, result)
 				}
@@ -473,7 +473,7 @@ func TestSubscriptionTierCombinations(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			withConfig(t, cfg, func() {
-				result := FormatStatusLine(nil, types.GitInfo{}, nil, &types.TokenStats{}, tt.subscription, tt.tier, false)
+				result := FormatStatusLine(nil, types.GitInfo{}, nil, &types.TokenStats{}, tt.subscription, tt.tier, false, nil)
 				if !strings.Contains(result, tt.contains) {
 					t.Errorf("Expected to contain %q, got: %q", tt.contains, result)
 				}
@@ -537,7 +537,7 @@ func TestDisplayModes(t *testing.T) {
 			}
 
 			withConfig(t, cfg, func() {
-				result := FormatStatusLine(session, gitInfo, nil, &types.TokenStats{}, "", "", false)
+				result := FormatStatusLine(session, gitInfo, nil, &types.TokenStats{}, "", "", false, nil)
 
 				if result == "" {
 					t.Error("Expected non-empty output")
@@ -602,7 +602,7 @@ func TestInfoModes(t *testing.T) {
 			}
 
 			withConfig(t, cfg, func() {
-				result := FormatStatusLine(nil, gitInfo, nil, &types.TokenStats{}, "", "", false)
+				result := FormatStatusLine(nil, gitInfo, nil, &types.TokenStats{}, "", "", false, nil)
 
 				for _, want := range tt.contains {
 					if !strings.Contains(result, want) {
@@ -807,7 +807,7 @@ func TestEdgeCases(t *testing.T) {
 
 	t.Run("all nil inputs", func(t *testing.T) {
 		withConfig(t, cfg, func() {
-			result := FormatStatusLine(nil, types.GitInfo{}, nil, &types.TokenStats{}, "", "", false)
+			result := FormatStatusLine(nil, types.GitInfo{}, nil, &types.TokenStats{}, "", "", false, nil)
 			// Should at least contain directory
 			if result == "" {
 				t.Error("Expected non-empty result with all nil inputs")
@@ -818,7 +818,7 @@ func TestEdgeCases(t *testing.T) {
 	t.Run("session with nil model", func(t *testing.T) {
 		withConfig(t, cfg, func() {
 			session := &types.SessionInput{Model: nil}
-			result := FormatStatusLine(session, types.GitInfo{}, nil, &types.TokenStats{}, "", "", false)
+			result := FormatStatusLine(session, types.GitInfo{}, nil, &types.TokenStats{}, "", "", false, nil)
 			if result == "" {
 				t.Error("Expected non-empty result")
 			}
@@ -831,7 +831,7 @@ func TestEdgeCases(t *testing.T) {
 				UsagePercent: 50.0,
 				ResetTime:    time.Time{},
 			}
-			result := FormatStatusLine(nil, types.GitInfo{}, usage, &types.TokenStats{}, "", "", false)
+			result := FormatStatusLine(nil, types.GitInfo{}, usage, &types.TokenStats{}, "", "", false, nil)
 			// Should show percentage but no time
 			if !strings.Contains(result, "50%") {
 				t.Error("Expected usage percentage")
@@ -845,7 +845,7 @@ func TestEdgeCases(t *testing.T) {
 				UsagePercent: 50.0,
 				ResetTime:    time.Now().Add(-1 * time.Hour), // In the past
 			}
-			result := FormatStatusLine(nil, types.GitInfo{}, usage, &types.TokenStats{}, "", "", false)
+			result := FormatStatusLine(nil, types.GitInfo{}, usage, &types.TokenStats{}, "", "", false, nil)
 			// Should not crash
 			if result == "" {
 				t.Error("Expected non-empty result")
@@ -859,10 +859,491 @@ func TestEdgeCases(t *testing.T) {
 				IsRepo: true,
 				Branch: "feature/very-long-branch-name-with-many-characters-that-goes-on-and-on",
 			}
-			result := FormatStatusLine(nil, gitInfo, nil, &types.TokenStats{}, "", "", false)
+			result := FormatStatusLine(nil, gitInfo, nil, &types.TokenStats{}, "", "", false, nil)
 			if !strings.Contains(result, "feature/very-long-branch-name") {
 				t.Error("Expected branch name in output")
 			}
 		})
 	})
+}
+
+// TestContextBar tests the context window usage bar rendering
+func TestContextBar(t *testing.T) {
+	tests := []struct {
+		name     string
+		percent  float64
+		contains []string
+	}{
+		{
+			name:     "low usage (green)",
+			percent:  25.0,
+			contains: []string{"[", "]", "25%", "██"},
+		},
+		{
+			name:     "medium usage (yellow threshold)",
+			percent:  72.0,
+			contains: []string{"72%", "███████"},
+		},
+		{
+			name:     "high usage (red threshold)",
+			percent:  90.0,
+			contains: []string{"90%", "█████████"},
+		},
+		{
+			name:     "zero usage",
+			percent:  0.0,
+			contains: []string{"0%", "░░░░░░░░░░"},
+		},
+		{
+			name:     "full usage",
+			percent:  100.0,
+			contains: []string{"100%", "██████████"},
+		},
+	}
+
+	cfg := &config.Config{
+		NoColor:     true,
+		DisplayMode: "colors",
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withConfig(t, cfg, func() {
+				result := formatContextBar(tt.percent, cfg)
+				for _, want := range tt.contains {
+					if !strings.Contains(result, want) {
+						t.Errorf("formatContextBar(%.1f) expected to contain %q, got %q", tt.percent, want, result)
+					}
+				}
+			})
+		})
+	}
+}
+
+// TestToolsActivity tests the tool activity rendering
+func TestToolsActivity(t *testing.T) {
+	cfg := &config.Config{
+		NoColor:     true,
+		DisplayMode: "colors",
+		ShowTools:   true,
+	}
+
+	tests := []struct {
+		name        string
+		data        *types.TranscriptData
+		contains    []string
+		notContains []string
+	}{
+		{
+			name: "running tool",
+			data: &types.TranscriptData{
+				Tools: []types.ToolEntry{
+					{Name: "Read", Target: "file.go", Status: "running"},
+				},
+			},
+			contains: []string{"◐", "Read", "file.go"},
+		},
+		{
+			name: "completed tools",
+			data: &types.TranscriptData{
+				Tools: []types.ToolEntry{
+					{Name: "Edit", Status: "completed"},
+					{Name: "Edit", Status: "completed"},
+					{Name: "Bash", Status: "completed"},
+				},
+			},
+			contains:    []string{"✓", "Edit×2", "Bash"},
+			notContains: []string{"◐"},
+		},
+		{
+			name: "mixed running and completed",
+			data: &types.TranscriptData{
+				Tools: []types.ToolEntry{
+					{Name: "Read", Status: "completed"},
+					{Name: "Edit", Target: "main.go", Status: "running"},
+				},
+			},
+			contains: []string{"◐", "Edit", "main.go", "✓", "Read"},
+		},
+		{
+			name:        "nil data",
+			data:        nil,
+			notContains: []string{"◐", "✓"},
+		},
+		{
+			name:        "empty tools",
+			data:        &types.TranscriptData{Tools: []types.ToolEntry{}},
+			notContains: []string{"◐", "✓"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withConfig(t, cfg, func() {
+				result := formatToolsActivity(tt.data, cfg)
+				for _, want := range tt.contains {
+					if !strings.Contains(result, want) {
+						t.Errorf("Expected to contain %q, got %q", want, result)
+					}
+				}
+				for _, notWant := range tt.notContains {
+					if result != "" && strings.Contains(result, notWant) {
+						t.Errorf("Expected NOT to contain %q, got %q", notWant, result)
+					}
+				}
+			})
+		})
+	}
+}
+
+// TestAgentsActivity tests the agent activity rendering
+func TestAgentsActivity(t *testing.T) {
+	cfg := &config.Config{
+		NoColor:     true,
+		DisplayMode: "colors",
+		ShowAgents:  true,
+	}
+
+	tests := []struct {
+		name        string
+		data        *types.TranscriptData
+		contains    []string
+		notContains []string
+	}{
+		{
+			name: "running agent",
+			data: &types.TranscriptData{
+				Agents: []types.AgentEntry{
+					{Type: "Explore", Description: "searching files", Status: "running", StartTime: time.Now().Add(-30 * time.Second)},
+				},
+			},
+			contains: []string{"◐", "Explore", "searching files"},
+		},
+		{
+			name: "completed agent not shown",
+			data: &types.TranscriptData{
+				Agents: []types.AgentEntry{
+					{Type: "Plan", Status: "completed"},
+				},
+			},
+			notContains: []string{"Plan"},
+		},
+		{
+			name:        "nil data",
+			data:        nil,
+			notContains: []string{"◐"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withConfig(t, cfg, func() {
+				result := formatAgentsActivity(tt.data, cfg)
+				for _, want := range tt.contains {
+					if !strings.Contains(result, want) {
+						t.Errorf("Expected to contain %q, got %q", want, result)
+					}
+				}
+				for _, notWant := range tt.notContains {
+					if result != "" && strings.Contains(result, notWant) {
+						t.Errorf("Expected NOT to contain %q, got %q", notWant, result)
+					}
+				}
+			})
+		})
+	}
+}
+
+// TestTodoProgress tests the todo progress rendering
+func TestTodoProgress(t *testing.T) {
+	cfg := &config.Config{
+		NoColor:     true,
+		DisplayMode: "colors",
+		ShowTodos:   true,
+	}
+
+	tests := []struct {
+		name        string
+		data        *types.TranscriptData
+		contains    []string
+		notContains []string
+	}{
+		{
+			name: "in progress todo",
+			data: &types.TranscriptData{
+				Todos: []types.TodoItem{
+					{Subject: "Fix authentication bug", Status: "in_progress"},
+					{Subject: "Add tests", Status: "pending"},
+					{Subject: "Setup", Status: "completed"},
+				},
+			},
+			contains: []string{"▸", "Fix authentication bug", "(1/3)"},
+		},
+		{
+			name: "all complete",
+			data: &types.TranscriptData{
+				Todos: []types.TodoItem{
+					{Subject: "Task 1", Status: "completed"},
+					{Subject: "Task 2", Status: "completed"},
+				},
+			},
+			contains:    []string{"✓", "Done", "(2/2)"},
+			notContains: []string{"▸"},
+		},
+		{
+			name:        "no todos",
+			data:        &types.TranscriptData{Todos: []types.TodoItem{}},
+			notContains: []string{"▸", "✓", "/"},
+		},
+		{
+			name:        "nil data",
+			data:        nil,
+			notContains: []string{"▸", "✓"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withConfig(t, cfg, func() {
+				result := formatTodoProgress(tt.data, cfg)
+				for _, want := range tt.contains {
+					if !strings.Contains(result, want) {
+						t.Errorf("Expected to contain %q, got %q", want, result)
+					}
+				}
+				for _, notWant := range tt.notContains {
+					if result != "" && strings.Contains(result, notWant) {
+						t.Errorf("Expected NOT to contain %q, got %q", notWant, result)
+					}
+				}
+			})
+		})
+	}
+}
+
+// TestFormatShortDuration tests the short duration formatting
+func TestFormatShortDuration(t *testing.T) {
+	tests := []struct {
+		duration time.Duration
+		expected string
+	}{
+		{500 * time.Millisecond, "<1s"},
+		{5 * time.Second, "5s"},
+		{45 * time.Second, "45s"},
+		{90 * time.Second, "1m30s"},
+		{5*time.Minute + 30*time.Second, "5m30s"},
+		{65*time.Minute + 15*time.Second, "1h5m"},
+		{2*time.Hour + 30*time.Minute, "2h30m"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			result := formatShortDuration(tt.duration)
+			if result != tt.expected {
+				t.Errorf("formatShortDuration(%v) = %q, want %q", tt.duration, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestNewFeaturesIntegration tests the full statusline with new features
+func TestNewFeaturesIntegration(t *testing.T) {
+	pct := 45.0
+	session := &types.SessionInput{
+		Model: &types.SessionModel{
+			DisplayName: "Sonnet 4.5",
+		},
+		ContextWindow: &types.ContextWindow{
+			Size:           200000,
+			UsedPercentage: &pct,
+		},
+	}
+
+	transcriptData := &types.TranscriptData{
+		Tools: []types.ToolEntry{
+			{Name: "Read", Target: "file.go", Status: "running"},
+			{Name: "Edit", Status: "completed"},
+		},
+		Agents: []types.AgentEntry{
+			{Type: "Explore", Description: "searching", Status: "running", StartTime: time.Now().Add(-10 * time.Second)},
+		},
+		Todos: []types.TodoItem{
+			{Subject: "Fix bug", Status: "in_progress"},
+			{Subject: "Done task", Status: "completed"},
+		},
+		SessionStart: time.Now().Add(-30 * time.Minute),
+	}
+
+	cfg := &config.Config{
+		NoColor:      true,
+		DisplayMode:  "colors",
+		ShowContext:  true,
+		ShowTools:    true,
+		ShowAgents:   true,
+		ShowTodos:    true,
+		ShowDuration: true,
+	}
+
+	withConfig(t, cfg, func() {
+		result := FormatStatusLine(session, types.GitInfo{IsRepo: true, Branch: "main"}, nil, &types.TokenStats{}, "", "", false, transcriptData)
+
+		checks := map[string]bool{
+			"model":          strings.Contains(result, "Sonnet 4.5"),
+			"context bar":    strings.Contains(result, "45%"),
+			"running tool":   strings.Contains(result, "Read"),
+			"completed tool": strings.Contains(result, "Edit"),
+			"agent":          strings.Contains(result, "Explore"),
+			"todo":           strings.Contains(result, "Fix bug"),
+			"progress":       strings.Contains(result, "(1/2)"),
+		}
+
+		for check, passed := range checks {
+			if !passed {
+				t.Errorf("Missing %s in output: %q", check, result)
+			}
+		}
+	})
+}
+
+// TestMultiLineOutput tests that output is multi-line when activity exists
+func TestMultiLineOutput(t *testing.T) {
+	cfg := &config.Config{
+		NoColor:      true,
+		DisplayMode:  "colors",
+		ShowContext:  true,
+		ShowTools:    true,
+		ShowAgents:   true,
+		ShowTodos:    true,
+		ShowDuration: true,
+	}
+
+	transcriptData := &types.TranscriptData{
+		Tools: []types.ToolEntry{
+			{Name: "Read", Status: "completed"},
+		},
+		Todos: []types.TodoItem{
+			{Subject: "Task", Status: "in_progress"},
+		},
+		SessionStart: time.Now().Add(-5 * time.Minute),
+	}
+
+	withConfig(t, cfg, func() {
+		result := FormatStatusLine(nil, types.GitInfo{}, nil, &types.TokenStats{}, "", "", false, transcriptData)
+
+		lines := strings.Split(result, "\n")
+		if len(lines) != 2 {
+			t.Errorf("Expected 2 lines, got %d: %q", len(lines), result)
+		}
+
+		// First line should have directory
+		if len(lines) > 0 && !strings.Contains(lines[0], "claude-code-statusline") {
+			// At minimum the directory should be on first line
+		}
+
+		// Second line should have activity (tools, todos, duration)
+		if len(lines) > 1 {
+			if !strings.Contains(lines[1], "Read") {
+				t.Errorf("Second line should contain tool 'Read': %q", lines[1])
+			}
+			if !strings.Contains(lines[1], "Task") {
+				t.Errorf("Second line should contain todo 'Task': %q", lines[1])
+			}
+		}
+	})
+}
+
+// TestSingleLineWhenNoActivity tests that output is single-line when no activity
+func TestSingleLineWhenNoActivity(t *testing.T) {
+	cfg := &config.Config{
+		NoColor:      true,
+		DisplayMode:  "colors",
+		ShowContext:  true,
+		ShowTools:    true,
+		ShowTodos:    true,
+		ShowDuration: true,
+	}
+
+	withConfig(t, cfg, func() {
+		// No transcript data = no activity line
+		result := FormatStatusLine(nil, types.GitInfo{}, nil, &types.TokenStats{}, "", "", false, nil)
+
+		lines := strings.Split(result, "\n")
+		if len(lines) != 1 {
+			t.Errorf("Expected 1 line when no activity, got %d: %q", len(lines), result)
+		}
+	})
+}
+
+// TestFeatureFlags tests that feature flags correctly disable components
+func TestFeatureFlags(t *testing.T) {
+	pct := 50.0
+	session := &types.SessionInput{
+		ContextWindow: &types.ContextWindow{
+			Size:           200000,
+			UsedPercentage: &pct,
+		},
+	}
+
+	transcriptData := &types.TranscriptData{
+		Tools: []types.ToolEntry{
+			{Name: "Read", Status: "running"},
+		},
+		Todos: []types.TodoItem{
+			{Subject: "Task", Status: "in_progress"},
+		},
+		SessionStart: time.Now().Add(-10 * time.Minute),
+	}
+
+	tests := []struct {
+		name        string
+		cfg         *config.Config
+		notContains []string
+	}{
+		{
+			name: "context disabled",
+			cfg: &config.Config{
+				NoColor:      true,
+				ShowContext:  false,
+				ShowTools:    true,
+				ShowTodos:    true,
+				ShowDuration: true,
+			},
+			notContains: []string{"50%", "███"},
+		},
+		{
+			name: "tools disabled",
+			cfg: &config.Config{
+				NoColor:      true,
+				ShowContext:  true,
+				ShowTools:    false,
+				ShowTodos:    true,
+				ShowDuration: true,
+			},
+			notContains: []string{"Read"},
+		},
+		{
+			name: "todos disabled",
+			cfg: &config.Config{
+				NoColor:      true,
+				ShowContext:  true,
+				ShowTools:    true,
+				ShowTodos:    false,
+				ShowDuration: true,
+			},
+			notContains: []string{"Task", "(0/1)"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withConfig(t, tt.cfg, func() {
+				result := FormatStatusLine(session, types.GitInfo{}, nil, &types.TokenStats{}, "", "", false, transcriptData)
+				for _, notWant := range tt.notContains {
+					if strings.Contains(result, notWant) {
+						t.Errorf("Expected NOT to contain %q when disabled, got %q", notWant, result)
+					}
+				}
+			})
+		})
+	}
 }

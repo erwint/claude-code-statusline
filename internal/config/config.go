@@ -10,13 +10,20 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	CacheTTL       int
-	NoColor        bool
+	CacheTTL        int
+	NoColor         bool
 	DisplayMode     string
 	InfoMode        string
 	Debug           bool
 	AggregationMode string // "sliding" or "fixed"
 	AutoUpdate      bool
+
+	// Feature flags for new components
+	ShowContext  bool
+	ShowTools    bool
+	ShowAgents   bool
+	ShowTodos    bool
+	ShowDuration bool
 }
 
 // Global configuration instance
@@ -40,6 +47,13 @@ func Parse() *Config {
 	flag.StringVar(&cfg.AggregationMode, "aggregation", getEnv("CLAUDE_STATUS_AGGREGATION", "fixed"), "Cost aggregation: sliding|fixed")
 	flag.BoolVar(&cfg.Debug, "debug", getEnvBool("CLAUDE_STATUS_DEBUG", false), "Enable debug output")
 	flag.BoolVar(&cfg.AutoUpdate, "auto-update", getEnvBool("CLAUDE_STATUS_AUTO_UPDATE", true), "Enable automatic updates (default: true)")
+
+	// Feature flags for new components (all default to true)
+	flag.BoolVar(&cfg.ShowContext, "show-context", getEnvBool("CLAUDE_STATUS_CONTEXT", true), "Show context window usage")
+	flag.BoolVar(&cfg.ShowTools, "show-tools", getEnvBool("CLAUDE_STATUS_TOOLS", true), "Show tool activity")
+	flag.BoolVar(&cfg.ShowAgents, "show-agents", getEnvBool("CLAUDE_STATUS_AGENTS", true), "Show agent activity")
+	flag.BoolVar(&cfg.ShowTodos, "show-todos", getEnvBool("CLAUDE_STATUS_TODOS", true), "Show todo progress")
+	flag.BoolVar(&cfg.ShowDuration, "show-duration", getEnvBool("CLAUDE_STATUS_DURATION", true), "Show session duration")
 	flag.Parse()
 	return cfg
 }

@@ -64,5 +64,49 @@ func ReadInput() *types.SessionInput {
 	if session.Model != nil {
 		config.DebugLog("parsed session: model=%s", session.Model.ID)
 	}
+	if session.TranscriptPath != "" {
+		config.DebugLog("parsed session: transcript_path=%s", session.TranscriptPath)
+	}
+	if session.ContextWindow != nil {
+		config.DebugLog("parsed session: context_window size=%d, used=%.1f%%",
+			session.ContextWindow.Size, GetContextPercent(&session))
+	}
 	return &session
+}
+
+// GetContextPercent returns the context window usage percentage
+// Prefers native used_percentage from Claude Code v2.1.6+, falls back to calculation
+func GetContextPercent(session *types.SessionInput) float64 {
+	if session == nil || session.ContextWindow == nil {
+		return 0
+	}
+
+	cw := session.ContextWindow
+
+	// Use native percentage if available (Claude Code v2.1.6+)
+	if cw.UsedPercentage != nil {
+		pct := *cw.UsedPercentage
+		if pct < 0 {
+			return 0
+		}
+		if pct > 100 {
+			return 100
+		}
+		return pct
+	}
+
+	// Calculate from token counts
+	if cw.Size <= 0 || cw.CurrentUsage == nil {
+		return 0
+	}
+
+	totalTokens := cw.CurrentUsage.InputTokens +
+		cw.CurrentUsage.CacheCreationInputTokens +
+		cw.CurrentUsage.CacheReadInputTokens
+
+	pct := float64(totalTokens) / float64(cw.Size) * 100
+	if pct > 100 {
+		return 100
+	}
+	return pct
 }
