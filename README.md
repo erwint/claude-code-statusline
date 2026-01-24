@@ -19,6 +19,22 @@ A fast, lightweight statusline for [Claude Code](https://claude.ai/code) showing
 
 ## Installation
 
+### Claude Code Plugin (Recommended)
+
+In any Claude Code session:
+
+```
+/install-plugin erwint/claude-code-statusline
+```
+
+Then run the setup command:
+
+```
+/claude-code-statusline:setup
+```
+
+This downloads the appropriate binary for your platform and configures Claude Code automatically.
+
 ### macOS / Linux
 
 ```bash
