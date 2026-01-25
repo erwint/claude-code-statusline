@@ -19,7 +19,7 @@ A fast, lightweight statusline for [Claude Code](https://claude.ai/code) showing
 
 ## Installation
 
-### Claude Code Plugin
+### Claude Code Plugin (Recommended)
 
 In any Claude Code session:
 
@@ -28,7 +28,9 @@ In any Claude Code session:
 /plugin install statusline@erwint-claude-code-statusline
 ```
 
-The binary is automatically downloaded on first session start. Restart Claude Code to see the statusline.
+Restart Claude Code. The binary is automatically downloaded on first session start.
+
+For manual setup or troubleshooting, run `/statusline:setup`.
 
 ### macOS / Linux
 
