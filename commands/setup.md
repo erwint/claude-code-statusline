@@ -1,10 +1,33 @@
 ---
-description: Install and configure claude-code-statusline
+description: Install or troubleshoot claude-code-statusline
 ---
 
 # Setup claude-code-statusline
 
 Install the statusline binary and configure Claude Code to use it.
+
+**Note:** The plugin normally installs automatically on session start. Use this command if the statusline doesn't appear or for troubleshooting.
+
+## Quick Diagnosis
+
+First, check what's wrong:
+
+1. **Check if binary exists:**
+   ```bash
+   ls -la ~/.claude/bin/claude-code-statusline
+   ```
+
+2. **Check if binary works:**
+   ```bash
+   ~/.claude/bin/claude-code-statusline --version
+   ```
+
+3. **Check settings.json has statusLine config:**
+   ```bash
+   grep statusLine ~/.claude/settings.json
+   ```
+
+If any of these fail, proceed with the steps below.
 
 ## Steps
 
@@ -108,18 +131,40 @@ Tell the user:
 
 ## Troubleshooting
 
-If the binary fails to download:
+### Binary fails to download
 - Check internet connectivity
 - Verify the platform detection was correct
 - Try downloading manually from https://github.com/erwint/claude-code-statusline/releases
 
-If the statusline doesn't appear after restart:
-- Verify `~/.claude/settings.json` has the correct `statusLine` configuration
-- Check that the binary path is correct and the file exists
-- Try running the binary manually to see any error messages
+### Statusline doesn't appear after restart
+- Verify `~/.claude/settings.json` has the `statusLine` configuration (see step 3)
+- Check that the binary exists at `~/.claude/bin/claude-code-statusline`
+- Run the binary manually to check for errors:
+  ```bash
+  echo '{}' | ~/.claude/bin/claude-code-statusline
+  ```
+
+### Binary exists but statusline is blank
+- Check if you're logged in with a Claude subscription (required for API usage data)
+- Try with debug mode to see what's happening:
+  ```bash
+  echo '{}' | CLAUDE_STATUS_DEBUG=true ~/.claude/bin/claude-code-statusline
+  ```
+- Check debug log at `/tmp/claude-statusline.log`
+
+### Wrong version installed
+- Force reinstall by removing the binary and restarting:
+  ```bash
+  rm ~/.claude/bin/claude-code-statusline
+  ```
+- Or update manually:
+  ```bash
+  ~/.claude/bin/claude-code-statusline --update
+  ```
 
 ## Notes
 
 - The statusline displays: git status, model, context bar, subscription, costs, API usage, tools, agents, todos, and session duration
 - Configure features via environment variables (e.g., `CLAUDE_STATUS_CONTEXT=false` to disable context bar)
 - The binary auto-updates daily by default
+- Documentation: https://github.com/erwint/claude-code-statusline
