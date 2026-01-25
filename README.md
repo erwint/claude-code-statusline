@@ -28,7 +28,7 @@ In any Claude Code session:
 /plugin install cc-statusline@cc-statusline
 ```
 
-Restart Claude Code. The binary downloads automatically and the statusline appears.
+Restart Claude Code or run `/clear` to start a new session. The binary downloads automatically and the statusline appears.
 
 If the statusline doesn't appear, run `/cc-statusline:setup` to manually install.
 
