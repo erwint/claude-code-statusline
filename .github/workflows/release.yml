@@ -22,6 +22,19 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify plugin version matches tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          TAG_VERSION="${TAG#v}"
+          PLUGIN_VERSION=$(grep '"version"' .claude-plugin/plugin.json | head -1 | sed 's/.*"version": "\([^"]*\)".*/\1/')
+
+          if [ "$TAG_VERSION" != "$PLUGIN_VERSION" ]; then
+            echo "::error::Version mismatch! Tag is $TAG but plugin.json has $PLUGIN_VERSION"
+            echo "Run: ./scripts/release.sh $TAG"
+            exit 1
+          fi
+          echo "Version check passed: $TAG_VERSION"
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
