@@ -14,12 +14,27 @@ if [ -f "$SETTINGS" ]; then
     fi
 fi
 
-# Install binary if not present
-if [ ! -x "$BINARY" ]; then
-    # Get version from plugin.json
-    VERSION=$(grep '"version"' "$PLUGIN_ROOT/.claude-plugin/plugin.json" | head -1 | sed 's/.*"version": "\([^"]*\)".*/\1/')
+# Get version from plugin.json
+VERSION=$(grep '"version"' "$PLUGIN_ROOT/.claude-plugin/plugin.json" | head -1 | sed 's/.*"version": "\([^"]*\)".*/\1/')
 
-    echo "Installing claude-code-statusline v$VERSION..."
+# Check if binary needs install/update
+NEED_INSTALL=false
+if [ ! -x "$BINARY" ]; then
+    NEED_INSTALL=true
+else
+    # Check installed version
+    INSTALLED_VERSION=$("$BINARY" --version 2>/dev/null | head -1 | sed 's/.*statusline \([^ ]*\).*/\1/')
+    if [ "$INSTALLED_VERSION" != "$VERSION" ]; then
+        NEED_INSTALL=true
+    fi
+fi
+
+if [ "$NEED_INSTALL" = true ]; then
+    if [ -n "$INSTALLED_VERSION" ]; then
+        echo "Updating claude-code-statusline $INSTALLED_VERSION -> v$VERSION..."
+    else
+        echo "Installing claude-code-statusline v$VERSION..."
+    fi
 
     # Detect platform
     OS=$(uname -s | tr '[:upper:]' '[:lower:]')
