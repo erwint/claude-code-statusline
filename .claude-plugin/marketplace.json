@@ -1,0 +1,20 @@
+{
+  "name": "claude-code-statusline",
+  "owner": {
+    "name": "erwint",
+    "url": "https://github.com/erwint"
+  },
+  "metadata": {
+    "description": "Fast, lightweight statusline showing git info, context usage, tool activity, costs, and more",
+    "version": "0.5.0"
+  },
+  "plugins": [
+    {
+      "name": "claude-code-statusline",
+      "source": "./",
+      "description": "Statusline showing git status, model, context bar, subscription, costs, API usage, tools, agents, todos, and session duration.",
+      "category": "monitoring",
+      "tags": ["statusline", "git", "context", "tools", "agents", "todos", "costs", "usage"]
+    }
+  ]
+}

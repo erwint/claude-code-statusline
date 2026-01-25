@@ -19,12 +19,12 @@ A fast, lightweight statusline for [Claude Code](https://claude.ai/code) showing
 
 ## Installation
 
-### Claude Code Plugin (Recommended)
+### Claude Code Plugin
 
-In any Claude Code session:
+In any Claude Code session, add the plugin:
 
 ```
-/install-plugin erwint/claude-code-statusline
+/plugin marketplace add erwint/claude-code-statusline
 ```
 
 Then run the setup command:
