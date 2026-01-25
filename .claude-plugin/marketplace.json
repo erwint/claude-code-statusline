@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Fast, lightweight statusline showing git info, context usage, tool activity, costs, and more",
-    "version": "0.6.2"
+    "version": "0.6.3"
   },
   "plugins": [
     {
