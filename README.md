@@ -21,19 +21,15 @@ A fast, lightweight statusline for [Claude Code](https://claude.ai/code) showing
 
 ### Claude Code Plugin
 
-In any Claude Code session, add the plugin:
+In any Claude Code session:
 
 ```
 /plugin marketplace add erwint/claude-code-statusline
-```
-
-Then run the setup command:
-
-```
+/plugin install statusline
 /statusline:setup
 ```
 
-This downloads the appropriate binary for your platform and configures Claude Code automatically.
+This adds the marketplace, installs the plugin, then downloads the binary and configures Claude Code.
 
 ### macOS / Linux
 
