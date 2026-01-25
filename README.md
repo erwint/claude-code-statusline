@@ -25,12 +25,12 @@ In any Claude Code session:
 
 ```
 /plugin marketplace add erwint/claude-code-statusline
-/plugin install statusline@erwint-claude-code-statusline
+/plugin install cc-statusline@erwint-claude-code-statusline
 ```
 
 Restart Claude Code. The binary is automatically downloaded on first session start.
 
-For manual setup or troubleshooting, run `/statusline:setup`.
+For manual setup or troubleshooting, run `/cc-statusline:setup`.
 
 ### macOS / Linux
 

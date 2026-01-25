@@ -1,5 +1,5 @@
 {
-  "name": "statusline",
+  "name": "cc-statusline",
   "owner": {
     "name": "erwint",
     "url": "https://github.com/erwint"
@@ -10,7 +10,7 @@
   },
   "plugins": [
     {
-      "name": "statusline",
+      "name": "cc-statusline",
       "source": "./",
       "description": "Statusline showing git status, model, context bar, subscription, costs, API usage, tools, agents, todos, and session duration.",
       "category": "monitoring",
