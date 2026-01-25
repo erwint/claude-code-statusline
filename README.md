@@ -30,7 +30,7 @@ In any Claude Code session, add the plugin:
 Then run the setup command:
 
 ```
-/claude-code-statusline:setup
+/statusline:setup
 ```
 
 This downloads the appropriate binary for your platform and configures Claude Code automatically.

@@ -1,5 +1,5 @@
 {
-  "name": "claude-code-statusline",
+  "name": "statusline",
   "description": "Fast, lightweight statusline showing git info, context usage, tool activity, costs, and more",
   "version": "0.5.0",
   "author": {
