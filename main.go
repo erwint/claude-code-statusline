@@ -69,6 +69,11 @@ func main() {
 	cfg := config.Parse()
 	cost.SetEmbeddedPricing(embeddedPricing)
 
+	// If installed via plugin, verify plugin is still installed
+	if !config.CheckRequiredPlugin() {
+		os.Exit(0) // Exit silently - plugin was uninstalled
+	}
+
 	// Check for updates once per day if auto-update is enabled (with jitter to avoid thundering herd)
 	if cfg.AutoUpdate {
 		go updater.CheckForUpdateDaily(version)

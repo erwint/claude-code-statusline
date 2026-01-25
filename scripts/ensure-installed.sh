@@ -50,20 +50,23 @@ fi
 
 # Configure settings.json if needed
 SETTINGS="$HOME/.claude/settings.json"
+PLUGIN_NAME="cc-statusline"
+STATUSLINE_CMD="~/.claude/bin/claude-code-statusline --require-plugin=${PLUGIN_NAME}"
+
 if [ -f "$SETTINGS" ]; then
     if ! grep -q '"statusLine"' "$SETTINGS"; then
         # Add statusLine to existing settings
         tmp=$(mktemp)
-        sed 's/^{$/{\n  "statusLine": { "type": "command", "command": "~\/.claude\/bin\/claude-code-statusline" },/' "$SETTINGS" > "$tmp"
+        sed "s/^{$/{\n  \"statusLine\": { \"type\": \"command\", \"command\": \"${STATUSLINE_CMD//\//\\/}\" },/" "$SETTINGS" > "$tmp"
         mv "$tmp" "$SETTINGS"
     fi
 else
     # Create new settings file
-    cat > "$SETTINGS" << 'EOF'
+    cat > "$SETTINGS" << EOF
 {
   "statusLine": {
     "type": "command",
-    "command": "~/.claude/bin/claude-code-statusline"
+    "command": "${STATUSLINE_CMD}"
   }
 }
 EOF
