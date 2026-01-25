@@ -1,56 +1,61 @@
 #!/bin/bash
-# Ensures the statusline binary is installed
+# Ensures the statusline binary is installed and configured
 # Called by SessionStart hook - installs from the plugin's checked-out version
 
 BINARY="$HOME/.claude/bin/claude-code-statusline"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(dirname "$(dirname "$0")")}"
-
-# Check if binary exists
-if [ -x "$BINARY" ]; then
-    exit 0
-fi
-
-# Get version from plugin.json
-VERSION=$(grep '"version"' "$PLUGIN_ROOT/.claude-plugin/plugin.json" | head -1 | sed 's/.*"version": "\([^"]*\)".*/\1/')
-
-echo "Installing claude-code-statusline v$VERSION..."
-
-# Detect platform
-OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-ARCH=$(uname -m)
-
-case "$OS" in
-    darwin) PLATFORM="darwin" ;;
-    linux) PLATFORM="linux" ;;
-    mingw*|msys*|cygwin*) PLATFORM="windows" ;;
-    *) echo "Unsupported OS: $OS"; exit 1 ;;
-esac
-
-case "$ARCH" in
-    x86_64|amd64) ARCH="amd64" ;;
-    arm64|aarch64) ARCH="arm64" ;;
-    *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
-esac
-
-PLATFORM="${PLATFORM}_${ARCH}"
-
-# Download and install
-mkdir -p "$HOME/.claude/bin"
-
-if [ "$PLATFORM" = "windows_amd64" ] || [ "$PLATFORM" = "windows_arm64" ]; then
-    URL="https://github.com/erwint/claude-code-statusline/releases/download/v${VERSION}/claude-code-statusline_${PLATFORM}.zip"
-    curl -fsSL "$URL" -o /tmp/statusline.zip
-    unzip -o /tmp/statusline.zip -d "$HOME/.claude/bin"
-    rm /tmp/statusline.zip
-else
-    URL="https://github.com/erwint/claude-code-statusline/releases/download/v${VERSION}/claude-code-statusline_${PLATFORM}.tar.gz"
-    curl -fsSL "$URL" | tar -xz -C "$HOME/.claude/bin"
-    chmod +x "$BINARY"
-fi
-
-# Configure settings.json if needed
 SETTINGS="$HOME/.claude/settings.json"
 PLUGIN_NAME="cc-statusline"
+
+# Check if plugin is enabled (exit if disabled)
+if [ -f "$SETTINGS" ]; then
+    if ! grep -q '"cc-statusline@cc-statusline": *true' "$SETTINGS"; then
+        exit 0
+    fi
+fi
+
+# Install binary if not present
+if [ ! -x "$BINARY" ]; then
+    # Get version from plugin.json
+    VERSION=$(grep '"version"' "$PLUGIN_ROOT/.claude-plugin/plugin.json" | head -1 | sed 's/.*"version": "\([^"]*\)".*/\1/')
+
+    echo "Installing claude-code-statusline v$VERSION..."
+
+    # Detect platform
+    OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    ARCH=$(uname -m)
+
+    case "$OS" in
+        darwin) PLATFORM="darwin" ;;
+        linux) PLATFORM="linux" ;;
+        mingw*|msys*|cygwin*) PLATFORM="windows" ;;
+        *) echo "Unsupported OS: $OS"; exit 1 ;;
+    esac
+
+    case "$ARCH" in
+        x86_64|amd64) ARCH="amd64" ;;
+        arm64|aarch64) ARCH="arm64" ;;
+        *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+    esac
+
+    PLATFORM="${PLATFORM}_${ARCH}"
+
+    # Download and install
+    mkdir -p "$HOME/.claude/bin"
+
+    if [ "$PLATFORM" = "windows_amd64" ] || [ "$PLATFORM" = "windows_arm64" ]; then
+        URL="https://github.com/erwint/claude-code-statusline/releases/download/v${VERSION}/claude-code-statusline_${PLATFORM}.zip"
+        curl -fsSL "$URL" -o /tmp/statusline.zip
+        unzip -o /tmp/statusline.zip -d "$HOME/.claude/bin"
+        rm /tmp/statusline.zip
+    else
+        URL="https://github.com/erwint/claude-code-statusline/releases/download/v${VERSION}/claude-code-statusline_${PLATFORM}.tar.gz"
+        curl -fsSL "$URL" | tar -xz -C "$HOME/.claude/bin"
+        chmod +x "$BINARY"
+    fi
+fi
+
+# Always ensure settings.json is configured
 STATUSLINE_CMD="~/.claude/bin/claude-code-statusline --require-plugin=${PLUGIN_NAME}"
 
 if [ -f "$SETTINGS" ]; then
@@ -71,5 +76,3 @@ else
 }
 EOF
 fi
-
-echo "Installed! Restart Claude Code to see the statusline."
