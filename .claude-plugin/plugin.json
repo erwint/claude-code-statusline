@@ -19,5 +19,17 @@
     "costs",
     "usage",
     "claude-code"
-  ]
+  ],
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/ensure-installed.sh"
+          }
+        ]
+      }
+    ]
+  }
 }

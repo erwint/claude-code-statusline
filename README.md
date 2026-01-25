@@ -25,11 +25,10 @@ In any Claude Code session:
 
 ```
 /plugin marketplace add erwint/claude-code-statusline
-/plugin install statusline
-/statusline:setup
+/plugin install statusline@erwint-claude-code-statusline
 ```
 
-This adds the marketplace, installs the plugin, then downloads the binary and configures Claude Code.
+The binary is automatically downloaded on first session start. Restart Claude Code to see the statusline.
 
 ### macOS / Linux
 
