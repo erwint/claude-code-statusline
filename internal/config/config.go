@@ -131,18 +131,39 @@ func CheckRequiredPlugin() bool {
 
 	// Check if our plugin is in the installed plugins
 	// Match exact name or marketplace@plugin format
+	pluginKey := ""
 	for key := range pluginsData.Plugins {
 		if key == cfg.RequirePlugin || key == cfg.RequirePlugin+"@"+cfg.RequirePlugin {
-			return true
+			pluginKey = key
+			break
 		}
 	}
 
-	// Plugin not installed, clean up
-	DebugLog("Plugin %s not found in installed plugins, cleaning up", cfg.RequirePlugin)
-	removeStatusLineConfig(homeDir)
-	// Print dimmed message to inform user why statusline is empty this session
-	fmt.Print("\033[2mstatusline plugin disabled\033[0m")
-	return false
+	if pluginKey == "" {
+		DebugLog("Plugin %s not found in installed plugins, cleaning up", cfg.RequirePlugin)
+		removeStatusLineConfig(homeDir)
+		fmt.Print("\033[2mstatusline plugin disabled\033[0m")
+		return false
+	}
+
+	// Also check if plugin is enabled in settings.json
+	settingsFile := filepath.Join(homeDir, ".claude", "settings.json")
+	settingsData, err := os.ReadFile(settingsFile)
+	if err == nil {
+		var settings struct {
+			EnabledPlugins map[string]bool `json:"enabledPlugins"`
+		}
+		if json.Unmarshal(settingsData, &settings) == nil {
+			if enabled, exists := settings.EnabledPlugins[pluginKey]; exists && !enabled {
+				DebugLog("Plugin %s is disabled in enabledPlugins, cleaning up", pluginKey)
+				removeStatusLineConfig(homeDir)
+				fmt.Print("\033[2mstatusline plugin disabled\033[0m")
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 // removeStatusLineConfig removes the statusLine key from settings.json
