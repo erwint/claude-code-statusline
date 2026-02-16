@@ -363,17 +363,17 @@ func calculateProjection(usagePercent float64, resetTime time.Time, totalWindow 
 	// Determine arrow based on deviation
 	var arrow string
 	if usagePercent > upperBound25 {
-		// >25% over: wide headed arrow
+		// >25% over: wide-headed arrow
 		arrow = " ⮝"
 	} else if usagePercent > upperBound5 {
-		// 5-25% over: double line arrow
-		arrow = " ⇈"
+		// 5-25% over: outline triangle
+		arrow = " △"
 	} else if usagePercent < lowerBound25 {
-		// >25% under: wide headed arrow
+		// >25% under: wide-headed arrow
 		arrow = " ⮟"
 	} else if usagePercent < lowerBound5 {
-		// 5-25% under: double line arrow
-		arrow = " ⇊"
+		// 5-25% under: outline triangle
+		arrow = " ▽"
 	} else {
 		// Within ±5%: on track, no arrow
 		return ""
