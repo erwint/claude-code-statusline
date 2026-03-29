@@ -40,8 +40,13 @@ func GetUsageAndSubscription() (*types.UsageCache, string, string, bool) {
 
 	// Check cache
 	if cache, valid := loadCache(cacheFile, cfg.CacheTTL); valid {
-		config.DebugLog("Using cached usage: %.1f%%", cache.UsagePercent)
-		return cache, subscription, tier, isApiBilling
+		// If the reset time has passed, force a refresh instead of using stale data
+		if !cache.ResetTime.IsZero() && time.Now().After(cache.ResetTime) {
+			config.DebugLog("Cache reset time has passed, forcing refresh")
+		} else {
+			config.DebugLog("Using cached usage: %.1f%%", cache.UsagePercent)
+			return cache, subscription, tier, isApiBilling
+		}
 	}
 
 	// Fetch from API
@@ -50,6 +55,16 @@ func GetUsageAndSubscription() (*types.UsageCache, string, string, bool) {
 		config.DebugLog("API error: %v", err)
 		// Return cached data even if expired, or nil
 		if cache, _ := loadCacheIgnoreExpiry(cacheFile); cache != nil {
+			// If the reset time has passed, the cached 100% data is stale
+			if !cache.ResetTime.IsZero() && time.Now().After(cache.ResetTime) {
+				config.DebugLog("Cache reset time has passed, clearing stale data")
+				cache.UsagePercent = 0
+				cache.ResetTime = time.Time{}
+			}
+			if !cache.SevenDayResetTime.IsZero() && time.Now().After(cache.SevenDayResetTime) {
+				cache.SevenDayPercent = 0
+				cache.SevenDayResetTime = time.Time{}
+			}
 			return cache, subscription, tier, isApiBilling
 		}
 		return nil, subscription, tier, isApiBilling
