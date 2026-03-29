@@ -53,7 +53,7 @@ func GetUsageAndSubscription() (*types.UsageCache, string, string, bool) {
 	// Check backoff before hitting the API
 	if b := loadBackoff(); b != nil && time.Now().Before(b.BackoffUntil) {
 		config.DebugLog("In backoff until %s (%.0fs interval)", b.BackoffUntil.Format("15:04:05"), b.BackoffSeconds)
-		return staleCacheOrNil(cacheFile), subscription, tier, isApiBilling
+		return staleCache(cacheFile), subscription, tier, isApiBilling
 	}
 
 	// Acquire fetch lock so multiple sessions don't race
@@ -71,7 +71,7 @@ func GetUsageAndSubscription() (*types.UsageCache, string, string, bool) {
 		if cache, valid := loadCache(cacheFile, cfg.CacheTTL); valid {
 			return cache, subscription, tier, isApiBilling
 		}
-		return staleCacheOrNil(cacheFile), subscription, tier, isApiBilling
+		return staleCache(cacheFile), subscription, tier, isApiBilling
 	}
 	lock.Close()
 	defer os.Remove(lockFile)
@@ -88,7 +88,7 @@ func GetUsageAndSubscription() (*types.UsageCache, string, string, bool) {
 	usage, fetchErr := fetchUsage(creds)
 	if fetchErr != nil {
 		config.DebugLog("API error: %v", fetchErr)
-		return staleCacheOrNil(cacheFile), subscription, tier, isApiBilling
+		return staleCache(cacheFile), subscription, tier, isApiBilling
 	}
 
 	// Success: decay backoff and save cache
@@ -174,22 +174,18 @@ func loadCache(file string, cacheTTL int) (*types.UsageCache, bool) {
 	return &cache, true
 }
 
-// staleCacheOrNil returns expired cache data, clearing any values whose
-// reset time has passed so we don't display stale "100% until" messages.
-func staleCacheOrNil(cacheFile string) *types.UsageCache {
+// staleCache returns expired cache data marked as stale, or an unavailable
+// marker if the reset time has passed (since we can't trust the values).
+func staleCache(cacheFile string) *types.UsageCache {
 	cache, err := loadCacheIgnoreExpiry(cacheFile)
 	if err != nil {
-		return nil
+		return &types.UsageCache{Unavailable: true}
 	}
 	if !cache.ResetTime.IsZero() && time.Now().After(cache.ResetTime) {
-		config.DebugLog("Cache reset time has passed, clearing stale data")
-		cache.UsagePercent = 0
-		cache.ResetTime = time.Time{}
+		config.DebugLog("Cache reset time has passed, data unavailable")
+		return &types.UsageCache{Unavailable: true}
 	}
-	if !cache.SevenDayResetTime.IsZero() && time.Now().After(cache.SevenDayResetTime) {
-		cache.SevenDayPercent = 0
-		cache.SevenDayResetTime = time.Time{}
-	}
+	cache.Stale = true
 	return cache
 }
 

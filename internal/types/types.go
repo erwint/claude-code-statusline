@@ -12,8 +12,13 @@ type UsageCache struct {
 	ResetTime    time.Time `json:"reset_time"`
 
 	// 7-day window
-	SevenDayPercent float64   `json:"seven_day_percent"`
+	SevenDayPercent   float64   `json:"seven_day_percent"`
 	SevenDayResetTime time.Time `json:"seven_day_reset_time"`
+
+	// Stale indicates the data may be outdated (e.g. in backoff after 429)
+	Stale bool `json:"-"`
+	// Unavailable indicates we can't reach the API and data has expired
+	Unavailable bool `json:"-"`
 }
 
 // UsageResponse is the API response from Anthropic

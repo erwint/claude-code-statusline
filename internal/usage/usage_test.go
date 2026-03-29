@@ -31,7 +31,7 @@ func writeJSON(t *testing.T, path string, v any) {
 	}
 }
 
-func TestStaleCacheOrNil_ClearsExpiredResetTime(t *testing.T) {
+func TestStaleCache_ReturnsUnavailableAfterExpiredResetTime(t *testing.T) {
 	_, cleanup := setupTestCacheDir(t)
 	defer cleanup()
 
@@ -41,39 +41,41 @@ func TestStaleCacheOrNil_ClearsExpiredResetTime(t *testing.T) {
 		ResetTime:    time.Now().Add(-1 * time.Hour), // expired
 	})
 
-	cache := staleCacheOrNil(cacheFile)
+	cache := staleCache(cacheFile)
 	if cache == nil {
-		t.Fatal("expected cache, got nil")
+		t.Fatal("expected unavailable marker, got nil")
 	}
-	if cache.UsagePercent != 0 {
-		t.Errorf("expected UsagePercent=0 after reset, got %.1f", cache.UsagePercent)
-	}
-	if !cache.ResetTime.IsZero() {
-		t.Errorf("expected zero ResetTime after reset, got %v", cache.ResetTime)
+	if !cache.Unavailable {
+		t.Error("expected Unavailable=true for expired reset time")
 	}
 }
 
-func TestStaleCacheOrNil_KeepsFutureResetTime(t *testing.T) {
+func TestStaleCache_ReturnsStaleForFutureResetTime(t *testing.T) {
 	_, cleanup := setupTestCacheDir(t)
 	defer cleanup()
 
 	cacheFile := getCacheFile("usage.json")
-	resetTime := time.Now().Add(1 * time.Hour)
 	writeJSON(t, cacheFile, &types.UsageCache{
 		UsagePercent: 80,
-		ResetTime:    resetTime,
+		ResetTime:    time.Now().Add(1 * time.Hour),
 	})
 
-	cache := staleCacheOrNil(cacheFile)
+	cache := staleCache(cacheFile)
 	if cache == nil {
 		t.Fatal("expected cache, got nil")
 	}
 	if cache.UsagePercent != 80 {
 		t.Errorf("expected UsagePercent=80, got %.1f", cache.UsagePercent)
 	}
+	if !cache.Stale {
+		t.Error("expected Stale=true")
+	}
+	if cache.Unavailable {
+		t.Error("expected Unavailable=false for valid reset time")
+	}
 }
 
-func TestStaleCacheOrNil_ClearsSevenDay(t *testing.T) {
+func TestStaleCache_PreservesAllFieldsWhenNotExpired(t *testing.T) {
 	_, cleanup := setupTestCacheDir(t)
 	defer cleanup()
 
@@ -82,15 +84,21 @@ func TestStaleCacheOrNil_ClearsSevenDay(t *testing.T) {
 		UsagePercent:      50,
 		ResetTime:         time.Now().Add(1 * time.Hour),
 		SevenDayPercent:   90,
-		SevenDayResetTime: time.Now().Add(-1 * time.Hour), // expired
+		SevenDayResetTime: time.Now().Add(1 * time.Hour),
 	})
 
-	cache := staleCacheOrNil(cacheFile)
-	if cache.SevenDayPercent != 0 {
-		t.Errorf("expected SevenDayPercent=0 after reset, got %.1f", cache.SevenDayPercent)
+	cache := staleCache(cacheFile)
+	if cache == nil {
+		t.Fatal("expected cache, got nil")
 	}
 	if cache.UsagePercent != 50 {
-		t.Errorf("five-hour should be untouched, got %.1f", cache.UsagePercent)
+		t.Errorf("expected 50%%, got %.1f", cache.UsagePercent)
+	}
+	if cache.SevenDayPercent != 90 {
+		t.Errorf("expected 90%% seven-day, got %.1f", cache.SevenDayPercent)
+	}
+	if !cache.Stale {
+		t.Error("expected Stale=true")
 	}
 }
 

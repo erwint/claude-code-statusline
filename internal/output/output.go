@@ -130,27 +130,38 @@ func FormatStatusLine(sess *types.SessionInput, git types.GitInfo, usage *types.
 			usageBg = bgYellow
 		}
 
-		usagePart := fmt.Sprintf("%.0f%%", usage.UsagePercent)
+		var usagePart string
+		if usage.Unavailable {
+			usagePart = "usage?"
+			usageColor = colorGray
+			usageBg = bgBlue
+		} else if usage.Stale {
+			usagePart = fmt.Sprintf("~%.0f%%", usage.UsagePercent)
+			usageColor = colorGray
+			usageBg = bgBlue
+		} else {
+			usagePart = fmt.Sprintf("%.0f%%", usage.UsagePercent)
 
-		// Add projection arrow if significantly off track
-		if !usage.ResetTime.IsZero() && usage.UsagePercent < 100 {
-			projection := calculateProjection(usage.UsagePercent, usage.ResetTime, 5*time.Hour, usageColor)
-			if projection != "" {
-				usagePart += projection
+			// Add projection arrow if significantly off track
+			if !usage.ResetTime.IsZero() && usage.UsagePercent < 100 {
+				projection := calculateProjection(usage.UsagePercent, usage.ResetTime, 5*time.Hour, usageColor)
+				if projection != "" {
+					usagePart += projection
+				}
 			}
-		}
 
-		// Reset time
-		if !usage.ResetTime.IsZero() {
-			if usage.UsagePercent >= 100 {
-				// At limit: show when it resets (local time)
-				resetLocal := usage.ResetTime.Local()
-				usagePart += fmt.Sprintf(" until %s", resetLocal.Format("15:04"))
-			} else {
-				// Not at limit: show time remaining
-				remaining := time.Until(usage.ResetTime)
-				if remaining > 0 {
-					usagePart += " " + formatDuration(remaining)
+			// Reset time
+			if !usage.ResetTime.IsZero() {
+				if usage.UsagePercent >= 100 {
+					// At limit: show when it resets (local time)
+					resetLocal := usage.ResetTime.Local()
+					usagePart += fmt.Sprintf(" until %s", resetLocal.Format("15:04"))
+				} else {
+					// Not at limit: show time remaining
+					remaining := time.Until(usage.ResetTime)
+					if remaining > 0 {
+						usagePart += " " + formatDuration(remaining)
+					}
 				}
 			}
 		}
