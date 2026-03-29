@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/erwint/claude-code-statusline/internal/config"
@@ -49,28 +50,49 @@ func GetUsageAndSubscription() (*types.UsageCache, string, string, bool) {
 		}
 	}
 
-	// Fetch from API
-	usage, err := fetchUsage(creds)
-	if err != nil {
-		config.DebugLog("API error: %v", err)
-		// Return cached data even if expired, or nil
-		if cache, _ := loadCacheIgnoreExpiry(cacheFile); cache != nil {
-			// If the reset time has passed, the cached 100% data is stale
-			if !cache.ResetTime.IsZero() && time.Now().After(cache.ResetTime) {
-				config.DebugLog("Cache reset time has passed, clearing stale data")
-				cache.UsagePercent = 0
-				cache.ResetTime = time.Time{}
-			}
-			if !cache.SevenDayResetTime.IsZero() && time.Now().After(cache.SevenDayResetTime) {
-				cache.SevenDayPercent = 0
-				cache.SevenDayResetTime = time.Time{}
-			}
-			return cache, subscription, tier, isApiBilling
-		}
-		return nil, subscription, tier, isApiBilling
+	// Check backoff before hitting the API
+	if b := loadBackoff(); b != nil && time.Now().Before(b.BackoffUntil) {
+		config.DebugLog("In backoff until %s (%.0fs interval)", b.BackoffUntil.Format("15:04:05"), b.BackoffSeconds)
+		return staleCacheOrNil(cacheFile), subscription, tier, isApiBilling
 	}
 
-	// Save cache
+	// Acquire fetch lock so multiple sessions don't race
+	lockFile := getCacheFile("usage.lock")
+	lock, err := os.OpenFile(lockFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		// Another session is fetching — check if the lock is stale (>30s)
+		if info, statErr := os.Stat(lockFile); statErr == nil && time.Since(info.ModTime()) > 30*time.Second {
+			os.Remove(lockFile)
+			config.DebugLog("Removed stale lock file")
+		} else {
+			config.DebugLog("Another session is fetching, using cache")
+		}
+		// Re-check cache (the other session may have just written it)
+		if cache, valid := loadCache(cacheFile, cfg.CacheTTL); valid {
+			return cache, subscription, tier, isApiBilling
+		}
+		return staleCacheOrNil(cacheFile), subscription, tier, isApiBilling
+	}
+	lock.Close()
+	defer os.Remove(lockFile)
+
+	// Re-check cache after acquiring lock (another session may have just fetched)
+	if cache, valid := loadCache(cacheFile, cfg.CacheTTL); valid {
+		if cache.ResetTime.IsZero() || !time.Now().After(cache.ResetTime) {
+			config.DebugLog("Cache refreshed by another session: %.1f%%", cache.UsagePercent)
+			return cache, subscription, tier, isApiBilling
+		}
+	}
+
+	// Fetch from API
+	usage, fetchErr := fetchUsage(creds)
+	if fetchErr != nil {
+		config.DebugLog("API error: %v", fetchErr)
+		return staleCacheOrNil(cacheFile), subscription, tier, isApiBilling
+	}
+
+	// Success: decay backoff and save cache
+	decayBackoff()
 	saveCache(cacheFile, usage)
 	config.DebugLog("Fetched usage: %.1f%%", usage.UsagePercent)
 	return usage, subscription, tier, isApiBilling
@@ -152,6 +174,25 @@ func loadCache(file string, cacheTTL int) (*types.UsageCache, bool) {
 	return &cache, true
 }
 
+// staleCacheOrNil returns expired cache data, clearing any values whose
+// reset time has passed so we don't display stale "100% until" messages.
+func staleCacheOrNil(cacheFile string) *types.UsageCache {
+	cache, err := loadCacheIgnoreExpiry(cacheFile)
+	if err != nil {
+		return nil
+	}
+	if !cache.ResetTime.IsZero() && time.Now().After(cache.ResetTime) {
+		config.DebugLog("Cache reset time has passed, clearing stale data")
+		cache.UsagePercent = 0
+		cache.ResetTime = time.Time{}
+	}
+	if !cache.SevenDayResetTime.IsZero() && time.Now().After(cache.SevenDayResetTime) {
+		cache.SevenDayPercent = 0
+		cache.SevenDayResetTime = time.Time{}
+	}
+	return cache
+}
+
 func loadCacheIgnoreExpiry(file string) (*types.UsageCache, error) {
 	data, err := os.ReadFile(file)
 	if err != nil {
@@ -169,6 +210,85 @@ func loadCacheIgnoreExpiry(file string) (*types.UsageCache, error) {
 func saveCache(file string, cache *types.UsageCache) {
 	data, _ := json.Marshal(cache)
 	os.WriteFile(file, data, 0644)
+}
+
+const (
+	backoffMin     = 15 * time.Second
+	backoffInitial = 30 * time.Second
+	backoffMax     = 5 * time.Minute
+)
+
+type backoffState struct {
+	BackoffUntil   time.Time `json:"backoff_until"`
+	BackoffSeconds float64   `json:"backoff_seconds"`
+}
+
+func loadBackoff() *backoffState {
+	data, err := os.ReadFile(getCacheFile("backoff.json"))
+	if err != nil {
+		return nil
+	}
+	var b backoffState
+	if err := json.Unmarshal(data, &b); err != nil {
+		return nil
+	}
+	return &b
+}
+
+func saveBackoff(b *backoffState) {
+	data, _ := json.Marshal(b)
+	os.WriteFile(getCacheFile("backoff.json"), data, 0644)
+}
+
+func clearBackoff() {
+	os.Remove(getCacheFile("backoff.json"))
+}
+
+func increaseBackoff(retryAfterHeader string) {
+	b := loadBackoff()
+
+	// Use Retry-After header if valid
+	if ra, err := strconv.Atoi(retryAfterHeader); err == nil && ra > 0 {
+		dur := time.Duration(ra) * time.Second
+		saveBackoff(&backoffState{
+			BackoffUntil:   time.Now().Add(dur),
+			BackoffSeconds: dur.Seconds(),
+		})
+		return
+	}
+
+	// Adaptive: 1.5x the previous backoff
+	next := backoffInitial
+	if b != nil {
+		next = time.Duration(b.BackoffSeconds*1.5) * time.Second
+	}
+	if next < backoffInitial {
+		next = backoffInitial
+	}
+	if next > backoffMax {
+		next = backoffMax
+	}
+	saveBackoff(&backoffState{
+		BackoffUntil:   time.Now().Add(next),
+		BackoffSeconds: next.Seconds(),
+	})
+}
+
+func decayBackoff() {
+	b := loadBackoff()
+	if b == nil {
+		return
+	}
+	next := time.Duration(b.BackoffSeconds*0.8) * time.Second
+	if next < backoffMin {
+		clearBackoff()
+		return
+	}
+	// Keep the reduced interval for next time, but don't block now
+	saveBackoff(&backoffState{
+		BackoffUntil:   time.Time{}, // not blocking, just remembering the level
+		BackoffSeconds: next.Seconds(),
+	})
 }
 
 func fetchUsage(creds *types.Credentials) (*types.UsageCache, error) {
@@ -190,6 +310,11 @@ func fetchUsage(creds *types.Credentials) (*types.UsageCache, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		increaseBackoff(resp.Header.Get("Retry-After"))
+		return nil, fmt.Errorf("rate limited (429)")
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
