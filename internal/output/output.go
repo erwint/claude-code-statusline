@@ -155,11 +155,11 @@ func FormatStatusLine(sess *types.SessionInput, git types.GitInfo, usage *types.
 		costPart := fmt.Sprintf("$%.2f/m $%.2f/w $%.2f/d",
 			stats.MonthlyCost, stats.WeeklyCost, stats.DailyCost)
 		if sessionCost, ok := sessionCostUSD(sess, cfg); ok {
-			costPart += fmt.Sprintf(" $%.2f/sess", sessionCost)
+			costPart += fmt.Sprintf(" ($%.2f)", sessionCost)
 		}
 		parts = append(parts, colorize(costPart, colorCyan, bgCyan, cfg))
 	} else if sessionCost, ok := sessionCostUSD(sess, cfg); ok {
-		parts = append(parts, colorize(fmt.Sprintf("$%.2f/sess", sessionCost), colorCyan, bgCyan, cfg))
+		parts = append(parts, colorize(fmt.Sprintf("($%.2f)", sessionCost), colorCyan, bgCyan, cfg))
 	}
 
 	// API Usage info (at the end)

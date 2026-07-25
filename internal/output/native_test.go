@@ -35,7 +35,7 @@ func TestSessionCostShown(t *testing.T) {
 		&types.TokenStats{DailyCost: 10, WeeklyCost: 20, MonthlyCost: 30},
 	)
 
-	if !strings.Contains(out, "$1.23/sess") {
+	if !strings.Contains(out, "($1.23)") {
 		t.Errorf("expected session cost in output, got: %s", out)
 	}
 	if !strings.Contains(out, "$30.00/m") {
@@ -49,7 +49,7 @@ func TestSessionCostHiddenWhenZero(t *testing.T) {
 		&types.SessionInput{Cost: &types.SessionCost{TotalCostUSD: 0}},
 		&types.TokenStats{DailyCost: 10},
 	)
-	if strings.Contains(out, "/sess") {
+	if strings.Contains(out, "($") {
 		t.Errorf("expected no session cost, got: %s", out)
 	}
 }
@@ -57,7 +57,7 @@ func TestSessionCostHiddenWhenZero(t *testing.T) {
 // Older Claude Code versions don't send cost at all.
 func TestSessionCostAbsentFromPayload(t *testing.T) {
 	out := renderWith(t, &types.SessionInput{}, &types.TokenStats{DailyCost: 10})
-	if strings.Contains(out, "/sess") {
+	if strings.Contains(out, "($") {
 		t.Errorf("expected no session cost, got: %s", out)
 	}
 }
@@ -68,7 +68,7 @@ func TestSessionCostWithoutBreakdown(t *testing.T) {
 		&types.SessionInput{Cost: &types.SessionCost{TotalCostUSD: 0.5}},
 		&types.TokenStats{},
 	)
-	if !strings.Contains(out, "$0.50/sess") {
+	if !strings.Contains(out, "($0.50)") {
 		t.Errorf("expected standalone session cost, got: %s", out)
 	}
 }
