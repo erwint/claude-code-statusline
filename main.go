@@ -90,7 +90,7 @@ func main() {
 
 	// Get all the status components
 	gitInfo := git.GetInfo()
-	usageData, subscription, tier, isApiBilling := usage.GetUsageAndSubscription()
+	usageData, subscription, tier, isApiBilling := usage.Resolve(sess)
 	tokenStats := cost.GetTokenStats()
 
 	// Format and output

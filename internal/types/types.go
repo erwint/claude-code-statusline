@@ -60,19 +60,24 @@ type PricingData struct {
 	History map[string][]PricePeriod `json:"history"`
 }
 
-// ModelPricing contains input/output token prices per million
+// ModelPricing contains input/output token prices per million. FastInput and
+// FastOutput are the fast-mode rates; zero means the model has no fast mode.
 type ModelPricing struct {
-	Input  float64 `json:"input"`
-	Output float64 `json:"output"`
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	FastInput  float64 `json:"fast_input,omitempty"`
+	FastOutput float64 `json:"fast_output,omitempty"`
 }
 
 // PricePeriod is a price that took effect on From and applies until the next
 // period begins. An empty From means "since the beginning of time" — used when
 // a model's earlier pricing history isn't known.
 type PricePeriod struct {
-	From   string  `json:"from,omitempty"` // YYYY-MM-DD
-	Input  float64 `json:"input"`
-	Output float64 `json:"output"`
+	From       string  `json:"from,omitempty"` // YYYY-MM-DD
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	FastInput  float64 `json:"fast_input,omitempty"`
+	FastOutput float64 `json:"fast_output,omitempty"`
 }
 
 // LogEntry represents a single log entry from Claude Code
@@ -93,6 +98,9 @@ type LogEntry struct {
 				Ephemeral5m int `json:"ephemeral_5m_input_tokens"`
 				Ephemeral1h int `json:"ephemeral_1h_input_tokens"`
 			} `json:"cache_creation"`
+			// Speed is "standard" or "fast". Fast mode bills at its own rate —
+			// double the standard rate on the models that support it.
+			Speed string `json:"speed"`
 		} `json:"usage"`
 		ID string `json:"id"`
 	} `json:"message"`
@@ -110,9 +118,67 @@ type TokenStats struct {
 type SessionInput struct {
 	Model          *SessionModel  `json:"model"`
 	SessionID      string         `json:"session_id"`
+	SessionName    string         `json:"session_name"`
 	Cwd            string         `json:"cwd"`
 	TranscriptPath string         `json:"transcript_path"`
 	ContextWindow  *ContextWindow `json:"context_window"`
+	// Cost is Claude Code's own accounting for this session — authoritative,
+	// unlike the log-derived estimates in TokenStats.
+	Cost *SessionCost `json:"cost"`
+	// RateLimits is subscription usage as reported by Claude Code. When
+	// present it replaces the API call in internal/usage entirely.
+	RateLimits *RateLimits `json:"rate_limits"`
+	Effort     *Effort     `json:"effort"`
+	// FastMode reports whether this session runs at fast-mode pricing.
+	FastMode bool         `json:"fast_mode"`
+	Agent    *AgentInfo   `json:"agent"`
+	PR       *PullRequest `json:"pr"`
+	Worktree *Worktree    `json:"worktree"`
+}
+
+// SessionCost is Claude Code's cost accounting for the current session
+type SessionCost struct {
+	TotalCostUSD      float64 `json:"total_cost_usd"`
+	TotalDurationMs   int64   `json:"total_duration_ms"`
+	TotalLinesAdded   int     `json:"total_lines_added"`
+	TotalLinesRemoved int     `json:"total_lines_removed"`
+}
+
+// RateLimits holds subscription usage windows reported by Claude Code
+type RateLimits struct {
+	FiveHour *RateLimitWindow `json:"five_hour"`
+	SevenDay *RateLimitWindow `json:"seven_day"`
+}
+
+// RateLimitWindow is one usage window. ResetsAt is a Unix timestamp.
+type RateLimitWindow struct {
+	UsedPercentage float64 `json:"used_percentage"`
+	ResetsAt       int64   `json:"resets_at"`
+}
+
+// Effort is the reasoning effort level for the current model
+type Effort struct {
+	Level string `json:"level"`
+}
+
+// AgentInfo names the subagent Claude Code is currently running as
+type AgentInfo struct {
+	Name string `json:"name"`
+}
+
+// PullRequest describes the PR associated with the current branch
+type PullRequest struct {
+	Number      int    `json:"number"`
+	URL         string `json:"url"`
+	ReviewState string `json:"review_state"`
+}
+
+// Worktree describes the git worktree the session is running in
+type Worktree struct {
+	Name           string `json:"name"`
+	Path           string `json:"path"`
+	Branch         string `json:"branch"`
+	OriginalBranch string `json:"original_branch"`
 }
 
 // ContextWindow represents context usage from Claude Code

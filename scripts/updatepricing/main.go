@@ -53,6 +53,7 @@ const (
 	crossURL    = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 	outputFile  = "pricing.json"
 	sectionHead = "## Model pricing"
+	fastHead    = "### Fast mode pricing"
 )
 
 var (
@@ -91,9 +92,14 @@ func main() {
 		fail("parsed only %d models — the docs table format likely changed", len(entries))
 	}
 
+	fast, ok := parseFast(md)
+	if !ok {
+		fail("fast mode pricing section %q not found — the docs format likely changed", fastHead)
+	}
+
 	now := time.Now().UTC()
 	existing, _ := os.ReadFile(outputFile)
-	history := merge(seed(loadHistory(existing)), build(entries, now), now)
+	history := merge(seed(loadHistory(existing)), build(entries, fast, now), now)
 	crossCheck(currentPrices(history, now))
 	out := render(history, now)
 
@@ -183,6 +189,52 @@ func parse(md string) ([]entry, error) {
 	return entries, nil
 }
 
+// parseFast reads the fast-mode rate table. Its rows list several models in one
+// cell ("Claude Opus 5 / Claude Opus 4.8"), so each name is resolved
+// separately. Models absent from the table have no fast mode.
+// The bool return distinguishes "the table says this model has no fast mode"
+// from "the table wasn't found". The first is real information — fast mode was
+// withdrawn from Opus 4.7 once — and gets recorded. The second would silently
+// erase every fast rate we know, so the caller treats it as fatal.
+func parseFast(md string) (map[string]modelPrice, bool) {
+	out := make(map[string]modelPrice)
+
+	start := strings.Index(md, fastHead)
+	if start < 0 {
+		return out, false
+	}
+	section := md[start+len(fastHead):]
+	if end := strings.Index(section, "\n#"); end > 0 {
+		section = section[:end]
+	}
+
+	for _, line := range strings.Split(section, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "|") || strings.Contains(line, "---") {
+			continue
+		}
+		cells := splitRow(line)
+		if len(cells) < 3 {
+			continue
+		}
+		input, ok1 := price(cells[1])
+		output, ok2 := price(cells[2])
+		if !ok1 || !ok2 {
+			continue
+		}
+		names := linkRe.ReplaceAllString(cells[0], "$1")
+		for _, name := range strings.Split(names, "/") {
+			m := modelRe.FindStringSubmatch(strings.TrimSpace(name))
+			if m == nil {
+				continue
+			}
+			id := "claude-" + strings.ToLower(m[1]) + "-" + strings.ReplaceAll(m[2], ".", "-")
+			out[id] = modelPrice{Input: input, Output: output}
+		}
+	}
+	return out, true
+}
+
 func splitRow(line string) []string {
 	parts := strings.Split(strings.Trim(line, "|"), "|")
 	for i := range parts {
@@ -201,17 +253,21 @@ func price(cell string) (float64, bool) {
 }
 
 type modelPrice struct {
-	Input  float64
-	Output float64
+	Input      float64
+	Output     float64
+	FastInput  float64
+	FastOutput float64
 }
 
 // period is one price and the date it took effect. An empty From means the
 // price applies to every date before the next period — used when the earlier
 // history isn't known.
 type period struct {
-	From   string  `json:"from,omitempty"`
-	Input  float64 `json:"input"`
-	Output float64 `json:"output"`
+	From       string  `json:"from,omitempty"`
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	FastInput  float64 `json:"fast_input,omitempty"`
+	FastOutput float64 `json:"fast_output,omitempty"`
 }
 
 const dayLayout = "2006-01-02"
@@ -219,7 +275,7 @@ const dayLayout = "2006-01-02"
 // build turns the parsed table rows into per-model periods. A row with an
 // explicit start date ("starting September 1, 2026") becomes a dated period; a
 // row without one becomes the model's baseline period.
-func build(entries []entry, now time.Time) map[string][]period {
+func build(entries []entry, fast map[string]modelPrice, now time.Time) map[string][]period {
 	out := make(map[string][]period)
 	newest := make(map[string]entry)
 
@@ -227,6 +283,11 @@ func build(entries []entry, now time.Time) map[string][]period {
 		p := period{Input: e.input, Output: e.output}
 		if !e.from.IsZero() {
 			p.From = e.from.Format(dayLayout)
+		}
+		// Fast-mode rates are listed per model, not per period, so they attach
+		// to whatever periods this run produces for that model.
+		if f, ok := fast[e.id]; ok {
+			p.FastInput, p.FastOutput = f.Input, f.Output
 		}
 		out[id] = append(out[id], p)
 	}
@@ -278,7 +339,12 @@ func build(entries []entry, now time.Time) map[string][]period {
 // no other Anthropic model was repriced between 2026-06-24 and 2026-07-25.
 var backfill = map[string][]period{
 	"claude-sonnet-5": {{From: "2026-06-30", Input: 2, Output: 10}},
-	"claude-opus-5":   {{From: "2026-07-24", Input: 5, Output: 25}},
+
+	// Opus 5 and Opus 4.8 are the two models with fast mode, at $10/$50 — both
+	// have had it since launch, so the rate isn't dated from when this tool
+	// first scraped it. Opus 4.8 predates the tracked window, hence no date.
+	"claude-opus-5":   {{From: "2026-07-24", Input: 5, Output: 25, FastInput: 10, FastOutput: 50}},
+	"claude-opus-4-8": {{Input: 5, Output: 25, FastInput: 10, FastOutput: 50}},
 
 	// Before Sonnet 5 launched, the newest Sonnet was 4.6 at $3/$15 — so an
 	// unknown "claude-sonnet-*" ID logged before 2026-06-30 cost $3/$15, not
@@ -344,8 +410,12 @@ func merge(old, fresh map[string][]period, now time.Time) map[string][]period {
 			case f.From == "":
 				// The rate in effect now. Append only if it differs from what
 				// we already believe applies today.
-				if cur, ok := priceOn(history, today); !ok || cur != (modelPrice{f.Input, f.Output}) {
-					history = append(history, period{From: today, Input: f.Input, Output: f.Output})
+				fresh := modelPrice{f.Input, f.Output, f.FastInput, f.FastOutput}
+				if cur, ok := priceOn(history, today); !ok || cur != fresh {
+					history = append(history, period{
+						From: today, Input: f.Input, Output: f.Output,
+						FastInput: f.FastInput, FastOutput: f.FastOutput,
+					})
 				}
 			case f.From <= today:
 				// A dated change that has already taken effect.
@@ -399,7 +469,12 @@ func priceOn(periods []period, day string) (modelPrice, bool) {
 	if !found {
 		return modelPrice{}, false
 	}
-	return modelPrice{Input: best.Input, Output: best.Output}, true
+	return modelPrice{
+		Input:      best.Input,
+		Output:     best.Output,
+		FastInput:  best.FastInput,
+		FastOutput: best.FastOutput,
+	}, true
 }
 
 func currentPrices(history map[string][]period, now time.Time) map[string]modelPrice {
@@ -466,8 +541,9 @@ func crossCheck(models map[string]modelPrice) {
 		if !ok || r.Provider != "anthropic" {
 			continue // family fallback key, or a model LiteLLM hasn't picked up
 		}
+		// Compare base rates only — LiteLLM's map has no fast-mode column.
 		got, want := models[id], modelPrice{Input: r.InputCost * 1e6, Output: r.OutputCost * 1e6}
-		if got != want {
+		if got.Input != want.Input || got.Output != want.Output {
 			fmt.Fprintf(os.Stderr,
 				"warning: %s — docs say $%s/$%s, LiteLLM says $%s/$%s (using docs)\n",
 				id, num(got.Input), num(got.Output), num(want.Input), num(want.Output))
@@ -506,9 +582,9 @@ func render(history map[string][]period, now time.Time) []byte {
 
 	b.WriteString("  \"models\": {\n")
 	for i, id := range ids {
-		key := fmt.Sprintf("%q:", id)
-		fmt.Fprintf(&b, "    %-*s {\"input\": %s, \"output\": %s}%s\n",
-			width, key, num(models[id].Input), num(models[id].Output), comma(i, len(ids)))
+		m := models[id]
+		fmt.Fprintf(&b, "    %-*s %s%s\n", width, fmt.Sprintf("%q:", id),
+			renderPrice(m.Input, m.Output, m.FastInput, m.FastOutput), comma(i, len(ids)))
 	}
 	b.WriteString("  },\n")
 
@@ -531,10 +607,19 @@ func render(history map[string][]period, now time.Time) []byte {
 }
 
 func renderPeriod(p period) string {
+	body := renderPrice(p.Input, p.Output, p.FastInput, p.FastOutput)
 	if p.From == "" {
-		return fmt.Sprintf("{\"input\": %s, \"output\": %s}", num(p.Input), num(p.Output))
+		return body
 	}
-	return fmt.Sprintf("{\"from\": %q, \"input\": %s, \"output\": %s}", p.From, num(p.Input), num(p.Output))
+	return fmt.Sprintf("{\"from\": %q, %s", p.From, strings.TrimPrefix(body, "{"))
+}
+
+func renderPrice(input, output, fastInput, fastOutput float64) string {
+	s := fmt.Sprintf("{\"input\": %s, \"output\": %s", num(input), num(output))
+	if fastInput > 0 || fastOutput > 0 {
+		s += fmt.Sprintf(", \"fast_input\": %s, \"fast_output\": %s", num(fastInput), num(fastOutput))
+	}
+	return s + "}"
 }
 
 func comma(i, n int) string {

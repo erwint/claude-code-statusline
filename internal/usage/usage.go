@@ -17,25 +17,71 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-// GetUsageAndSubscription retrieves usage data and subscription info
-// Returns: usage data, subscription type, tier, and whether on API billing
-func GetUsageAndSubscription() (*types.UsageCache, string, string, bool) {
-	cacheFile := getCacheFile("usage.json")
-	subscription := ""
-	tier := ""
-	isApiBilling := false
+// Resolve returns usage data and subscription info, preferring the rate limits
+// Claude Code passes on stdin.
+//
+// The native numbers come from the same source the API would report, but
+// without a network round trip — so there is no rate limit to back off from, no
+// token to refresh, no cross-session fetch coordination, and no staleness. The
+// API path below remains for Claude Code versions that don't send rate_limits.
+func Resolve(sess *types.SessionInput) (*types.UsageCache, string, string, bool) {
+	if native := fromSession(sess); native != nil {
+		subscription, tier, isApiBilling := subscriptionInfo()
+		config.DebugLog("Using native rate limits from stdin: %.1f%%", native.UsagePercent)
+		return native, subscription, tier, isApiBilling
+	}
+	return GetUsageAndSubscription()
+}
 
+// fromSession converts Claude Code's rate_limits payload into a UsageCache.
+// Returns nil when the payload doesn't carry usable rate limits.
+func fromSession(sess *types.SessionInput) *types.UsageCache {
+	if sess == nil || sess.RateLimits == nil {
+		return nil
+	}
+	rl := sess.RateLimits
+	if rl.FiveHour == nil && rl.SevenDay == nil {
+		return nil
+	}
+
+	cache := &types.UsageCache{}
+	if w := rl.FiveHour; w != nil {
+		cache.UsagePercent = w.UsedPercentage
+		if w.ResetsAt > 0 {
+			cache.ResetTime = time.Unix(w.ResetsAt, 0)
+		}
+	}
+	if w := rl.SevenDay; w != nil {
+		cache.SevenDayPercent = w.UsedPercentage
+		if w.ResetsAt > 0 {
+			cache.SevenDayResetTime = time.Unix(w.ResetsAt, 0)
+		}
+	}
+	return cache
+}
+
+// subscriptionInfo reads plan and tier from the local credential store. This is
+// a local read with no rate limit, so it runs on both the native and API paths.
+func subscriptionInfo() (subscription, tier string, isApiBilling bool) {
 	// Detect API billing: check if ANTHROPIC_API_KEY is set (primary indicator)
 	if os.Getenv("ANTHROPIC_API_KEY") != "" {
 		isApiBilling = true
 	}
 
-	// Get subscription from credentials
-	creds := getCredentials()
-	if creds != nil && creds.ClaudeAiOauth != nil {
+	if creds := getCredentials(); creds != nil && creds.ClaudeAiOauth != nil {
 		subscription = creds.ClaudeAiOauth.SubscriptionType
 		tier = creds.ClaudeAiOauth.RateLimitTier
 	}
+	return subscription, tier, isApiBilling
+}
+
+// GetUsageAndSubscription retrieves usage data from the API and subscription
+// info from local credentials. Prefer Resolve, which avoids the API call when
+// Claude Code supplies rate limits directly.
+// Returns: usage data, subscription type, tier, and whether on API billing
+func GetUsageAndSubscription() (*types.UsageCache, string, string, bool) {
+	cacheFile := getCacheFile("usage.json")
+	subscription, tier, isApiBilling := subscriptionInfo()
 
 	cfg := config.Get()
 
@@ -85,7 +131,7 @@ func GetUsageAndSubscription() (*types.UsageCache, string, string, bool) {
 	}
 
 	// Fetch from API
-	usage, fetchErr := fetchUsage(creds)
+	usage, fetchErr := fetchUsage(getCredentials())
 	if fetchErr != nil {
 		config.DebugLog("API error: %v", fetchErr)
 		return staleCache(cacheFile), subscription, tier, isApiBilling

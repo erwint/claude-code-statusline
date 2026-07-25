@@ -32,6 +32,31 @@ const (
 	bgCyan       = "\033[46m"
 )
 
+// sessionCostUSD returns the current session's cost as reported by Claude Code.
+// The second return is false when the session hasn't cost anything yet or the
+// payload doesn't carry cost data.
+func sessionCostUSD(sess *types.SessionInput, cfg *config.Config) (float64, bool) {
+	if !cfg.ShowSessionCost || sess == nil || sess.Cost == nil {
+		return 0, false
+	}
+	if sess.Cost.TotalCostUSD <= 0 {
+		return 0, false
+	}
+	return sess.Cost.TotalCostUSD, true
+}
+
+// reviewStateColors maps a PR review state to its display colors.
+func reviewStateColors(state string) (color, bg string) {
+	switch state {
+	case "approved":
+		return colorGreen, bgGreen
+	case "changes_requested":
+		return colorRed, bgRed
+	default: // pending, or a state we don't know
+		return colorGray, bgBlue
+	}
+}
+
 // FormatStatusLine builds the complete status line output
 func FormatStatusLine(sess *types.SessionInput, git types.GitInfo, usage *types.UsageCache, stats *types.TokenStats, subscription, tier string, isApiBilling bool, transcriptData *types.TranscriptData) string {
 	cfg := config.Get()
@@ -47,6 +72,12 @@ func FormatStatusLine(sess *types.SessionInput, git types.GitInfo, usage *types.
 		}
 	}
 	parts = append(parts, colorize(dir, colorBlue, bgBlue, cfg))
+
+	// Worktree name, when the session runs in one. The branch shown by the git
+	// segment is the worktree's branch, which doesn't say which worktree it is.
+	if cfg.ShowWorktree && sess != nil && sess.Worktree != nil && sess.Worktree.Name != "" {
+		parts = append(parts, colorize("⑂ "+sess.Worktree.Name, colorMagenta, bgMagenta, cfg))
+	}
 
 	// Git info
 	if git.IsRepo {
@@ -73,11 +104,24 @@ func FormatStatusLine(sess *types.SessionInput, git types.GitInfo, usage *types.
 		parts = append(parts, colorize(gitPart, colorMagenta, bgMagenta, cfg))
 	}
 
+	// Pull request for the current branch
+	if cfg.ShowPR && sess != nil && sess.PR != nil && sess.PR.Number > 0 {
+		prColor, prBg := reviewStateColors(sess.PR.ReviewState)
+		parts = append(parts, colorize(fmt.Sprintf("#%d", sess.PR.Number), prColor, prBg, cfg))
+	}
+
 	// Model info (from stdin session)
 	if sess != nil && sess.Model != nil {
 		modelName := sess.Model.DisplayName
 		if modelName == "" {
 			modelName = formatModelName(sess.Model.ID)
+		}
+		// Fast mode bills at double the standard rate, so make it visible.
+		if sess.FastMode {
+			modelName += " ⚡"
+		}
+		if cfg.ShowEffort && sess.Effort != nil && sess.Effort.Level != "" {
+			modelName += " (" + sess.Effort.Level + ")"
 		}
 		parts = append(parts, colorize(modelName, colorCyan, bgCyan, cfg))
 	}
@@ -105,11 +149,17 @@ func FormatStatusLine(sess *types.SessionInput, git types.GitInfo, usage *types.
 		parts = append(parts, colorize(subPart, colorGray, bgBlue, cfg))
 	}
 
-	// Cost breakdown: monthly / weekly / daily
+	// Cost breakdown: monthly / weekly / daily, then this session.
+	// The session figure is Claude Code's own accounting, not our estimate.
 	if stats.DailyCost > 0 || stats.WeeklyCost > 0 || stats.MonthlyCost > 0 {
 		costPart := fmt.Sprintf("$%.2f/m $%.2f/w $%.2f/d",
 			stats.MonthlyCost, stats.WeeklyCost, stats.DailyCost)
+		if sessionCost, ok := sessionCostUSD(sess, cfg); ok {
+			costPart += fmt.Sprintf(" $%.2f/sess", sessionCost)
+		}
 		parts = append(parts, colorize(costPart, colorCyan, bgCyan, cfg))
+	} else if sessionCost, ok := sessionCostUSD(sess, cfg); ok {
+		parts = append(parts, colorize(fmt.Sprintf("$%.2f/sess", sessionCost), colorCyan, bgCyan, cfg))
 	}
 
 	// API Usage info (at the end)

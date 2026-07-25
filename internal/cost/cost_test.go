@@ -16,12 +16,14 @@ func TestCalculateCost(t *testing.T) {
 		Models: map[string]types.ModelPricing{
 			"claude-opus-4-5":   {Input: 15.0, Output: 75.0},
 			"claude-sonnet-4-5": {Input: 3.0, Output: 15.0},
+			"claude-opus-5":     {Input: 5.0, Output: 25.0, FastInput: 10.0, FastOutput: 50.0},
 		},
 	}
 
 	tests := []struct {
 		name         string
 		model        string
+		speed        string
 		inputTokens  int
 		outputTokens int
 		cache5m      int
@@ -75,11 +77,44 @@ func TestCalculateCost(t *testing.T) {
 			outputTokens: 1000000,
 			expectedCost: 15.0 + 75.0, // $15 input + $75 output
 		},
+		{
+			name:         "standard speed uses the base rate",
+			model:        "claude-opus-5",
+			speed:        "standard",
+			inputTokens:  1000000,
+			outputTokens: 1000000,
+			expectedCost: 5.0 + 25.0,
+		},
+		{
+			name:         "fast mode uses the fast rate",
+			model:        "claude-opus-5",
+			speed:        "fast",
+			inputTokens:  1000000,
+			outputTokens: 1000000,
+			expectedCost: 10.0 + 50.0, // double, per the fast-mode rate table
+		},
+		{
+			name:         "fast mode prices cache writes at the fast input rate",
+			model:        "claude-opus-5",
+			speed:        "fast",
+			cache1h:      1000000,
+			expectedCost: 10.0 * 2.0,
+		},
+		{
+			// Fast mode isn't offered on every model; billing a made-up
+			// premium would be worse than falling back to the known rate.
+			name:         "fast mode on a model without fast pricing falls back",
+			model:        "claude-sonnet-4-5",
+			speed:        "fast",
+			inputTokens:  1000000,
+			outputTokens: 1000000,
+			expectedCost: 3.0 + 15.0,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cost := calculateCost(tt.model, "2026-07-01", tt.inputTokens, tt.outputTokens, tt.cache5m, tt.cache1h, tt.cacheRead, pricing)
+			cost := calculateCost(tt.model, "2026-07-01", tt.speed, tt.inputTokens, tt.outputTokens, tt.cache5m, tt.cache1h, tt.cacheRead, pricing)
 			if !floatEquals(cost, tt.expectedCost) {
 				t.Errorf("expected cost %.6f, got %.6f", tt.expectedCost, cost)
 			}

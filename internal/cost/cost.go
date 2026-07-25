@@ -26,7 +26,8 @@ var embeddedPricing []byte
 // would produce different numbers for already-processed logs.
 // v2: cache writes split into 5m (1.25x) and 1h (2x) tiers; prices resolved
 // against the day the tokens were spent rather than today's rate.
-const costCacheVersion = 2
+// v3: fast-mode requests billed at the fast rate.
+const costCacheVersion = 3
 
 // CostCache stores per-day cost totals and file processing state
 type CostCache struct {
@@ -294,7 +295,8 @@ func processLogEntry(line []byte, cache *CostCache, pricing *types.PricingData, 
 	// Add to day bucket (use local time for user's perspective), and price the
 	// entry at the rate that was in effect that day.
 	day := ts.Local().Format("2006-01-02")
-	cache.DayCosts[day] += calculateCost(entry.Message.Model, day, inputTokens, outputTokens, cache5m, cache1h, cacheRead, pricing)
+	cache.DayCosts[day] += calculateCost(entry.Message.Model, day, usage.Speed,
+		inputTokens, outputTokens, cache5m, cache1h, cacheRead, pricing)
 }
 
 func aggregateStats(cache *CostCache, now time.Time) *types.TokenStats {
@@ -364,8 +366,19 @@ const (
 	cacheReadRate    = 0.1  // cache hit or refresh
 )
 
-func calculateCost(model, day string, inputTokens, outputTokens, cache5m, cache1h, cacheRead int, pricing *types.PricingData) float64 {
+// speedFast is the value Claude Code records in usage.speed for a fast-mode
+// request; anything else (typically "standard", or absent) bills normally.
+const speedFast = "fast"
+
+func calculateCost(model, day, speed string, inputTokens, outputTokens, cache5m, cache1h, cacheRead int, pricing *types.PricingData) float64 {
 	p := getPricing(model, day, pricing)
+
+	// Fast mode is a separate rate, not a discount or surcharge on the base
+	// one. Fall back to standard pricing if we don't have a fast rate for this
+	// model — better to under-report than to invent a multiplier.
+	if speed == speedFast && p.FastInput > 0 && p.FastOutput > 0 {
+		p = types.ModelPricing{Input: p.FastInput, Output: p.FastOutput}
+	}
 
 	var cost float64
 	cost += float64(inputTokens) / 1000000 * p.Input
@@ -436,7 +449,12 @@ func lookupPrice(key, day string, pricing *types.PricingData) (types.ModelPricin
 			// thing we have to the rate that applied back then.
 			best = periods[0]
 		}
-		return types.ModelPricing{Input: best.Input, Output: best.Output}, true
+		return types.ModelPricing{
+			Input:      best.Input,
+			Output:     best.Output,
+			FastInput:  best.FastInput,
+			FastOutput: best.FastOutput,
+		}, true
 	}
 
 	p, ok := pricing.Models[key]

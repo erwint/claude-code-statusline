@@ -7,10 +7,11 @@ A fast, lightweight statusline for [Claude Code](https://claude.ai/code) showing
 ## Features
 
 - **Git status**: branch, modified/staged/untracked indicators, ahead/behind
-- **Model**: current Claude model in use
+- **Worktree & PR**: worktree name and pull request number colored by review state
+- **Model**: current Claude model, reasoning effort, and fast-mode indicator
 - **Context window**: visual usage bar with color-coded thresholds
 - **Subscription**: plan type and rate limit tier
-- **Costs**: daily/weekly/monthly token costs from your usage logs
+- **Costs**: current session cost plus daily/weekly/monthly totals from your usage logs
 - **API usage**: current utilization % and time until reset
 - **Tool activity**: running tools with spinner, completed tool counts
 - **Agent tracking**: subagent status with description and elapsed time
@@ -101,6 +102,10 @@ The install script automatically configures Claude Code by adding to `~/.claude/
 | `CLAUDE_STATUS_AGENTS` | `true` | Show agent activity |
 | `CLAUDE_STATUS_TODOS` | `true` | Show todo progress |
 | `CLAUDE_STATUS_DURATION` | `true` | Show session duration |
+| `CLAUDE_STATUS_SESSION_COST` | `true` | Show cost of the current session |
+| `CLAUDE_STATUS_EFFORT` | `true` | Show reasoning effort level |
+| `CLAUDE_STATUS_PR` | `true` | Show pull request number and review state |
+| `CLAUDE_STATUS_WORKTREE` | `true` | Show git worktree name |
 
 **Aggregation modes:**
 - `fixed`: Calendar periods - today, this week (Mon-Sun), this month (1st onwards)
@@ -121,6 +126,10 @@ The install script automatically configures Claude Code by adding to `~/.claude/
 --show-agents           Show agent activity (default: true)
 --show-todos            Show todo progress (default: true)
 --show-duration         Show session duration (default: true)
+--show-session-cost     Show cost of the current session (default: true)
+--show-effort           Show reasoning effort level (default: true)
+--show-pr               Show pull request number and review state (default: true)
+--show-worktree         Show git worktree name (default: true)
 --version               Show version info
 --update                Download and install the latest version
 ```
@@ -130,11 +139,22 @@ The install script automatically configures Claude Code by adding to `~/.claude/
 ## How It Works
 
 1. **Git info**: Runs `git` commands to get branch and status
-2. **Model & context**: Receives current model and context window via stdin JSON from Claude Code
-3. **Credentials**: Reads from `~/.claude/credentials.json`, falls back to system keychain
-4. **API usage**: Fetches from Anthropic's OAuth API (cached)
-5. **Costs**: Parses `~/.claude/projects/*/*.jsonl` logs (incremental, cached)
+2. **Session data**: Receives model, context window, effort, session cost, PR, and worktree via stdin JSON from Claude Code
+3. **Usage limits**: Read from the `rate_limits` field Claude Code provides on stdin. Older Claude Code versions don't send it, so the statusline falls back to Anthropic's OAuth API (cached, with backoff)
+4. **Credentials**: Reads plan and tier from `~/.claude/credentials.json`, falls back to system keychain
+5. **Costs**: The session figure comes from Claude Code directly. Daily/weekly/monthly totals are estimated by parsing `~/.claude/projects/*/*.jsonl` logs (incremental, cached) against `pricing.json`
 6. **Activity**: Parses transcript JSONL for tools, agents, todos, and session start
+
+### Pricing data
+
+Anthropic publishes no pricing API, so `pricing.json` is generated from the [published pricing table](https://platform.claude.com/docs/en/about-claude/pricing) by `scripts/updatepricing`, cross-checked against LiteLLM's price map, and refreshed daily by a GitHub Action. Installed statuslines pick up changes within 24h.
+
+Prices carry effective dates and are only ever appended, so a rate change is never applied to usage that was billed at the old rate. Cache writes are billed by TTL (5-minute at 1.25x input, 1-hour at 2x), and fast-mode requests at their own rate.
+
+```bash
+go run ./scripts/updatepricing          # refresh pricing.json
+go run ./scripts/updatepricing -check   # fail if out of date
+```
 
 ## Supported Platforms
 

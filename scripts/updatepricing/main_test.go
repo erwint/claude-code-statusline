@@ -152,13 +152,66 @@ func TestMergeKeepsRetiredModels(t *testing.T) {
 func TestSeedThenMergeKeepsResearchedDate(t *testing.T) {
 	history := seed(map[string][]period{})
 	got := merge(history,
-		map[string][]period{"claude-opus-5": {{Input: 5, Output: 25}}},
+		map[string][]period{"claude-opus-5": {
+			{Input: 5, Output: 25, FastInput: 10, FastOutput: 50},
+		}},
 		day("2026-07-25"),
 	)
 
-	want := []period{{From: "2026-07-24", Input: 5, Output: 25}}
+	want := []period{{From: "2026-07-24", Input: 5, Output: 25, FastInput: 10, FastOutput: 50}}
 	if !reflect.DeepEqual(got["claude-opus-5"], want) {
 		t.Errorf("got %+v, want %+v", got["claude-opus-5"], want)
+	}
+}
+
+// Fast mode has been withdrawn from a model before (Opus 4.7), so a model
+// dropping out of the fast table is recorded as a dated change, not ignored.
+func TestMergeRecordsFastModeWithdrawal(t *testing.T) {
+	history := map[string][]period{"claude-opus-4-7": {
+		{Input: 5, Output: 25, FastInput: 10, FastOutput: 50},
+	}}
+	fresh := map[string][]period{"claude-opus-4-7": {{Input: 5, Output: 25}}}
+
+	got := merge(history, fresh, day("2026-08-01"))
+
+	want := []period{
+		{Input: 5, Output: 25, FastInput: 10, FastOutput: 50},
+		{From: "2026-08-01", Input: 5, Output: 25},
+	}
+	if !reflect.DeepEqual(got["claude-opus-4-7"], want) {
+		t.Fatalf("got %+v, want %+v", got["claude-opus-4-7"], want)
+	}
+
+	if p, _ := priceOn(got["claude-opus-4-7"], "2026-07-31"); p.FastInput != 10 {
+		t.Error("fast usage before the withdrawal should still bill at the fast rate")
+	}
+	if p, _ := priceOn(got["claude-opus-4-7"], "2026-08-01"); p.FastInput != 0 {
+		t.Error("fast rate should be gone after withdrawal")
+	}
+}
+
+// Both models sharing one cell of the fast table are resolved separately.
+func TestParseFastMultiModelRow(t *testing.T) {
+	md := "### Fast mode pricing\n\n" +
+		"| Model | Input | Output |\n" +
+		"| --- | --- | --- |\n" +
+		"| Claude Opus 5 / Claude Opus 4.8 | $10 / MTok | $50 / MTok |\n"
+
+	got, ok := parseFast(md)
+	if !ok {
+		t.Fatal("expected the section to be found")
+	}
+	for _, id := range []string{"claude-opus-5", "claude-opus-4-8"} {
+		if got[id] != (modelPrice{Input: 10, Output: 50}) {
+			t.Errorf("%s: got %+v, want $10/$50", id, got[id])
+		}
+	}
+}
+
+// A missing section must be reported, not treated as "no model has fast mode".
+func TestParseFastMissingSection(t *testing.T) {
+	if _, ok := parseFast("## Model pricing\n\nnothing here\n"); ok {
+		t.Error("expected ok=false when the fast mode section is absent")
 	}
 }
 
@@ -193,7 +246,7 @@ func TestBuildSkipsExpiredRows(t *testing.T) {
 		{id: "claude-sonnet-5", family: "claude-sonnet", version: 5, input: 3, output: 15, from: day("2026-09-01")},
 	}
 
-	got := build(entries, day("2026-09-15"))
+	got := build(entries, nil, day("2026-09-15"))
 
 	want := []period{{From: "2026-09-01", Input: 3, Output: 15}}
 	if !reflect.DeepEqual(got["claude-sonnet-5"], want) {

@@ -22,11 +22,15 @@ type Config struct {
 	RequirePlugin   string // Plugin name that must be installed (empty = no requirement)
 
 	// Feature flags for new components
-	ShowContext  bool
-	ShowTools    bool
-	ShowAgents   bool
-	ShowTodos    bool
-	ShowDuration bool
+	ShowContext     bool
+	ShowTools       bool
+	ShowAgents      bool
+	ShowTodos       bool
+	ShowDuration    bool
+	ShowSessionCost bool
+	ShowEffort      bool
+	ShowPR          bool
+	ShowWorktree    bool
 }
 
 // Global configuration instance
@@ -58,6 +62,10 @@ func Parse() *Config {
 	flag.BoolVar(&cfg.ShowAgents, "show-agents", getEnvBool("CLAUDE_STATUS_AGENTS", true), "Show agent activity")
 	flag.BoolVar(&cfg.ShowTodos, "show-todos", getEnvBool("CLAUDE_STATUS_TODOS", true), "Show todo progress")
 	flag.BoolVar(&cfg.ShowDuration, "show-duration", getEnvBool("CLAUDE_STATUS_DURATION", true), "Show session duration")
+	flag.BoolVar(&cfg.ShowSessionCost, "show-session-cost", getEnvBool("CLAUDE_STATUS_SESSION_COST", true), "Show cost of the current session")
+	flag.BoolVar(&cfg.ShowEffort, "show-effort", getEnvBool("CLAUDE_STATUS_EFFORT", true), "Show reasoning effort level")
+	flag.BoolVar(&cfg.ShowPR, "show-pr", getEnvBool("CLAUDE_STATUS_PR", true), "Show pull request number and review state")
+	flag.BoolVar(&cfg.ShowWorktree, "show-worktree", getEnvBool("CLAUDE_STATUS_WORKTREE", true), "Show git worktree name")
 	flag.Parse()
 	return cfg
 }
