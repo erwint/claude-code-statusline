@@ -21,8 +21,18 @@ const (
 
 var embeddedPricing []byte
 
+// costCacheVersion invalidates cached day totals when the cost model changes.
+// Bump it whenever calculateCost or the pricing lookup changes in a way that
+// would produce different numbers for already-processed logs.
+// v2: cache writes split into 5m (1.25x) and 1h (2x) tiers; prices resolved
+// against the day the tokens were spent rather than today's rate.
+const costCacheVersion = 2
+
 // CostCache stores per-day cost totals and file processing state
 type CostCache struct {
+	// Version of the cost model that produced DayCosts
+	Version int `json:"version"`
+
 	// DayCosts maps date string (YYYY-MM-DD) to total cost for that day
 	DayCosts map[string]float64 `json:"day_costs"`
 	// FileState tracks last processed position for each log file
@@ -101,6 +111,7 @@ func GetTokenStats() *types.TokenStats {
 
 func loadCostCache(path string) *CostCache {
 	cache := &CostCache{
+		Version:           costCacheVersion,
 		DayCosts:          make(map[string]float64),
 		FileState:         make(map[string]FileProcessState),
 		ProcessedMessages: make(map[string]bool),
@@ -112,6 +123,18 @@ func loadCostCache(path string) *CostCache {
 	}
 
 	json.Unmarshal(data, cache)
+
+	// Cached totals were computed by a different cost model — recompute from
+	// the logs rather than reporting stale numbers.
+	if cache.Version != costCacheVersion {
+		config.DebugLog("Cost cache version %d != %d, rebuilding", cache.Version, costCacheVersion)
+		return &CostCache{
+			Version:           costCacheVersion,
+			DayCosts:          make(map[string]float64),
+			FileState:         make(map[string]FileProcessState),
+			ProcessedMessages: make(map[string]bool),
+		}
+	}
 
 	// Ensure maps are initialized
 	if cache.DayCosts == nil {
@@ -250,21 +273,28 @@ func processLogEntry(line []byte, cache *CostCache, pricing *types.PricingData, 
 	cache.ProcessedMessages[key] = true
 
 	// Get token counts
-	inputTokens := entry.Message.Usage.InputTokens
-	outputTokens := entry.Message.Usage.OutputTokens
-	cacheCreation := entry.Message.Usage.CacheCreationInputTokens
-	cacheRead := entry.Message.Usage.CacheReadInputTokens
+	usage := entry.Message.Usage
+	inputTokens := usage.InputTokens
+	outputTokens := usage.OutputTokens
+	cacheCreation := usage.CacheCreationInputTokens
+	cacheRead := usage.CacheReadInputTokens
 
 	if inputTokens == 0 && outputTokens == 0 && cacheCreation == 0 && cacheRead == 0 {
 		return
 	}
 
-	// Calculate cost
-	cost := calculateCost(entry.Message.Model, inputTokens, outputTokens, cacheCreation, cacheRead, pricing)
+	// Split cache writes by TTL when the breakdown is present. Older logs only
+	// carry the total, in which case bill it all at the 5m rate.
+	cache5m := usage.CacheCreation.Ephemeral5m
+	cache1h := usage.CacheCreation.Ephemeral1h
+	if cache5m+cache1h == 0 {
+		cache5m = cacheCreation
+	}
 
-	// Add to day bucket (use local time for user's perspective)
+	// Add to day bucket (use local time for user's perspective), and price the
+	// entry at the rate that was in effect that day.
 	day := ts.Local().Format("2006-01-02")
-	cache.DayCosts[day] += cost
+	cache.DayCosts[day] += calculateCost(entry.Message.Model, day, inputTokens, outputTokens, cache5m, cache1h, cacheRead, pricing)
 }
 
 func aggregateStats(cache *CostCache, now time.Time) *types.TokenStats {
@@ -326,52 +356,91 @@ func aggregateFixed(cache *CostCache, now time.Time, stats *types.TokenStats) {
 	}
 }
 
-func calculateCost(model string, inputTokens, outputTokens, cacheCreation, cacheRead int, pricing *types.PricingData) float64 {
-	p := getPricing(model, pricing)
+// Cache pricing is a fixed multiple of the model's base input price.
+// https://platform.claude.com/docs/en/about-claude/pricing#prompt-caching
+const (
+	cacheWrite5mRate = 1.25 // 5-minute cache write
+	cacheWrite1hRate = 2.0  // 1-hour cache write
+	cacheReadRate    = 0.1  // cache hit or refresh
+)
 
-	// Cache read tokens are discounted (10% of input price)
-	// Cache creation tokens are charged at 1.25x input price
+func calculateCost(model, day string, inputTokens, outputTokens, cache5m, cache1h, cacheRead int, pricing *types.PricingData) float64 {
+	p := getPricing(model, day, pricing)
+
 	var cost float64
 	cost += float64(inputTokens) / 1000000 * p.Input
-	cost += float64(cacheCreation) / 1000000 * p.Input * 1.25
-	cost += float64(cacheRead) / 1000000 * p.Input * 0.1
+	cost += float64(cache5m) / 1000000 * p.Input * cacheWrite5mRate
+	cost += float64(cache1h) / 1000000 * p.Input * cacheWrite1hRate
+	cost += float64(cacheRead) / 1000000 * p.Input * cacheReadRate
 	cost += float64(outputTokens) / 1000000 * p.Output
 	return cost
 }
 
-// getPricing finds pricing for a model with fallback:
+// getPricing finds the price for a model as it stood on day (YYYY-MM-DD), with
+// fallback:
 // 1. Exact match (e.g., "claude-sonnet-4-5-20250514")
 // 2. Versioned model (e.g., "claude-sonnet-4-5")
 // 3. Base model (e.g., "claude-sonnet")
 // 4. Default sonnet pricing
-func getPricing(model string, pricing *types.PricingData) types.ModelPricing {
+func getPricing(model, day string, pricing *types.PricingData) types.ModelPricing {
+	// Drop context-window suffixes such as "claude-opus-5[1m]" — they don't
+	// change the per-token rate.
+	if idx := strings.Index(model, "["); idx > 0 {
+		model = model[:idx]
+	}
+
 	// Try exact match
-	if p, ok := pricing.Models[model]; ok {
+	if p, ok := lookupPrice(model, day, pricing); ok {
 		return p
 	}
 
 	// Try without date suffix (e.g., "claude-sonnet-4-5-20250514" -> "claude-sonnet-4-5")
 	if idx := strings.LastIndex(model, "-20"); idx > 0 {
 		versionedModel := model[:idx]
-		if p, ok := pricing.Models[versionedModel]; ok {
+		if p, ok := lookupPrice(versionedModel, day, pricing); ok {
 			return p
 		}
 
 		// Try base model (e.g., "claude-sonnet-4-5" -> "claude-sonnet")
 		baseModel := stripVersion(versionedModel)
-		if p, ok := pricing.Models[baseModel]; ok {
+		if p, ok := lookupPrice(baseModel, day, pricing); ok {
 			return p
 		}
 	}
 
 	// Try stripping version from original model
 	baseModel := stripVersion(model)
-	if p, ok := pricing.Models[baseModel]; ok {
+	if p, ok := lookupPrice(baseModel, day, pricing); ok {
 		return p
 	}
 
 	// Default to sonnet pricing
 	return types.ModelPricing{Input: 3.0, Output: 15.0}
+}
+
+// lookupPrice resolves one model key, preferring the dated history so that a
+// price change is never applied to days that predate it. Falls back to the
+// current-price snapshot for pricing files without history.
+func lookupPrice(key, day string, pricing *types.PricingData) (types.ModelPricing, bool) {
+	if periods, ok := pricing.History[key]; ok && len(periods) > 0 {
+		// Periods are ordered oldest first; take the last one that had started.
+		best := periods[0]
+		found := false
+		for _, p := range periods {
+			if p.From == "" || p.From <= day {
+				best, found = p, true
+			}
+		}
+		if !found {
+			// Every period starts after this day — the oldest is the closest
+			// thing we have to the rate that applied back then.
+			best = periods[0]
+		}
+		return types.ModelPricing{Input: best.Input, Output: best.Output}, true
+	}
+
+	p, ok := pricing.Models[key]
+	return p, ok
 }
 
 // stripVersion removes version numbers from model name

@@ -49,12 +49,28 @@ type OAuthCredentials struct {
 
 // PricingData holds model pricing information
 type PricingData struct {
-	Updated string                  `json:"updated"`
-	Models  map[string]ModelPricing `json:"models"`
+	Updated string `json:"updated"`
+	// Models is the price in effect today, keyed by model ID. Kept for
+	// compatibility with statusline versions that predate History.
+	Models map[string]ModelPricing `json:"models"`
+	// History is the dated price list per model, oldest first. Prices change
+	// over time (introductory rates, tier repricing), and logs are costed
+	// against the rate that applied on the day they were written — so History
+	// takes precedence over Models whenever it has an entry.
+	History map[string][]PricePeriod `json:"history"`
 }
 
 // ModelPricing contains input/output token prices per million
 type ModelPricing struct {
+	Input  float64 `json:"input"`
+	Output float64 `json:"output"`
+}
+
+// PricePeriod is a price that took effect on From and applies until the next
+// period begins. An empty From means "since the beginning of time" — used when
+// a model's earlier pricing history isn't known.
+type PricePeriod struct {
+	From   string  `json:"from,omitempty"` // YYYY-MM-DD
 	Input  float64 `json:"input"`
 	Output float64 `json:"output"`
 }
@@ -70,6 +86,13 @@ type LogEntry struct {
 			OutputTokens             int `json:"output_tokens"`
 			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+			// CacheCreation splits the cache write total by TTL. The two tiers
+			// are priced differently (5m at 1.25x input, 1h at 2x), and Claude
+			// Code writes almost exclusively 1h entries.
+			CacheCreation struct {
+				Ephemeral5m int `json:"ephemeral_5m_input_tokens"`
+				Ephemeral1h int `json:"ephemeral_1h_input_tokens"`
+			} `json:"cache_creation"`
 		} `json:"usage"`
 		ID string `json:"id"`
 	} `json:"message"`
@@ -94,10 +117,10 @@ type SessionInput struct {
 
 // ContextWindow represents context usage from Claude Code
 type ContextWindow struct {
-	Size             int            `json:"context_window_size"`
-	CurrentUsage     *ContextUsage  `json:"current_usage"`
-	UsedPercentage   *float64       `json:"used_percentage"`
-	RemainingPercent *float64       `json:"remaining_percentage"`
+	Size             int           `json:"context_window_size"`
+	CurrentUsage     *ContextUsage `json:"current_usage"`
+	UsedPercentage   *float64      `json:"used_percentage"`
+	RemainingPercent *float64      `json:"remaining_percentage"`
 }
 
 // ContextUsage holds token counts for current usage

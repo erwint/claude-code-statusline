@@ -20,13 +20,14 @@ func TestCalculateCost(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		model         string
-		inputTokens   int
-		outputTokens  int
-		cacheCreation int
-		cacheRead     int
-		expectedCost  float64
+		name         string
+		model        string
+		inputTokens  int
+		outputTokens int
+		cache5m      int
+		cache1h      int
+		cacheRead    int
+		expectedCost float64
 	}{
 		{
 			name:         "simple input/output",
@@ -36,12 +37,28 @@ func TestCalculateCost(t *testing.T) {
 			expectedCost: 3.0 + 15.0, // $3 input + $15 output
 		},
 		{
-			name:          "with cache creation",
-			model:         "claude-sonnet-4-5",
-			inputTokens:   1000000,
-			outputTokens:  0,
-			cacheCreation: 1000000,
-			expectedCost:  3.0 + (3.0 * 1.25), // $3 input + $3.75 cache creation
+			name:         "with 5m cache creation",
+			model:        "claude-sonnet-4-5",
+			inputTokens:  1000000,
+			outputTokens: 0,
+			cache5m:      1000000,
+			expectedCost: 3.0 + (3.0 * 1.25), // $3 input + $3.75 cache creation
+		},
+		{
+			name:         "with 1h cache creation",
+			model:        "claude-sonnet-4-5",
+			inputTokens:  0,
+			outputTokens: 0,
+			cache1h:      1000000,
+			expectedCost: 3.0 * 2.0, // $6 — 1h writes cost 2x input
+		},
+		{
+			name:         "mixed cache tiers",
+			model:        "claude-sonnet-4-5",
+			cache5m:      1000000,
+			cache1h:      1000000,
+			cacheRead:    1000000,
+			expectedCost: 3.75 + 6.0 + 0.3,
 		},
 		{
 			name:         "with cache read",
@@ -62,7 +79,7 @@ func TestCalculateCost(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cost := calculateCost(tt.model, tt.inputTokens, tt.outputTokens, tt.cacheCreation, tt.cacheRead, pricing)
+			cost := calculateCost(tt.model, "2026-07-01", tt.inputTokens, tt.outputTokens, tt.cache5m, tt.cache1h, tt.cacheRead, pricing)
 			if !floatEquals(cost, tt.expectedCost) {
 				t.Errorf("expected cost %.6f, got %.6f", tt.expectedCost, cost)
 			}
@@ -96,17 +113,84 @@ func TestGetPricingFallback(t *testing.T) {
 	}{
 		{"exact match", "claude-sonnet-4-5", 3.0},
 		{"strip date suffix", "claude-sonnet-4-5-20251101", 3.0},
+		{"strip context suffix", "claude-sonnet-4-5[1m]", 3.0},
 		{"fallback to base", "claude-opus-4-5-20251101", 15.0},
 		{"unknown model fallback", "claude-unknown-model", 3.0}, // default sonnet
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := getPricing(tt.model, pricing)
+			p := getPricing(tt.model, "2026-07-01", pricing)
 			if p.Input != tt.expectedInput {
 				t.Errorf("expected input price %.2f, got %.2f", tt.expectedInput, p.Input)
 			}
 		})
+	}
+}
+
+// A price change must never be applied to usage that predates it.
+func TestGetPricingUsesRateInEffectOnDay(t *testing.T) {
+	pricing := &types.PricingData{
+		// Models carries today's rate; History must win over it.
+		Models: map[string]types.ModelPricing{
+			"claude-sonnet-5": {Input: 3.0, Output: 15.0},
+		},
+		History: map[string][]types.PricePeriod{
+			"claude-sonnet-5": {
+				{Input: 2.0, Output: 10.0},                     // introductory
+				{From: "2026-09-01", Input: 3.0, Output: 15.0}, // standard
+			},
+		},
+	}
+
+	tests := []struct {
+		day            string
+		expectedInput  float64
+		expectedOutput float64
+	}{
+		{"2026-07-25", 2.0, 10.0}, // before the change
+		{"2026-08-31", 2.0, 10.0}, // last day of the old rate
+		{"2026-09-01", 3.0, 15.0}, // day it takes effect
+		{"2027-01-15", 3.0, 15.0}, // long after
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.day, func(t *testing.T) {
+			p := getPricing("claude-sonnet-5", tt.day, pricing)
+			if p.Input != tt.expectedInput || p.Output != tt.expectedOutput {
+				t.Errorf("on %s expected $%.2f/$%.2f, got $%.2f/$%.2f",
+					tt.day, tt.expectedInput, tt.expectedOutput, p.Input, p.Output)
+			}
+		})
+	}
+}
+
+// Dated periods resolve through the same alias/base fallback chain as flat prices.
+func TestGetPricingHistoryViaFallbackChain(t *testing.T) {
+	pricing := &types.PricingData{
+		History: map[string][]types.PricePeriod{
+			"claude-opus": {
+				{Input: 15.0, Output: 75.0},
+				{From: "2026-06-01", Input: 5.0, Output: 25.0},
+			},
+		},
+	}
+
+	if p := getPricing("claude-opus-9-9-20260401", "2026-04-01", pricing); p.Input != 15.0 {
+		t.Errorf("expected pre-change base price 15.0, got %.2f", p.Input)
+	}
+	if p := getPricing("claude-opus-9-9[1m]", "2026-07-01", pricing); p.Input != 5.0 {
+		t.Errorf("expected post-change base price 5.0, got %.2f", p.Input)
+	}
+}
+
+// A pricing.json with no history at all still works.
+func TestGetPricingWithoutHistory(t *testing.T) {
+	pricing := &types.PricingData{
+		Models: map[string]types.ModelPricing{"claude-opus-5": {Input: 5.0, Output: 25.0}},
+	}
+	if p := getPricing("claude-opus-5", "2026-07-01", pricing); p.Input != 5.0 {
+		t.Errorf("expected 5.0, got %.2f", p.Input)
 	}
 }
 
@@ -137,6 +221,7 @@ func TestCostCacheLoadSave(t *testing.T) {
 
 	// Create and save cache
 	cache := &CostCache{
+		Version: costCacheVersion,
 		DayCosts: map[string]float64{
 			"2025-11-28": 10.50,
 			"2025-11-29": 25.00,
@@ -167,6 +252,29 @@ func TestCostCacheLoadSave(t *testing.T) {
 	}
 	if len(loaded.ProcessedMessages) != 2 {
 		t.Errorf("expected 2 processed messages, got %d", len(loaded.ProcessedMessages))
+	}
+}
+
+func TestCostCacheVersionMismatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	cacheFile := filepath.Join(tmpDir, "cost_cache.json")
+
+	// A cache written by an older cost model
+	stale := &CostCache{
+		Version:           costCacheVersion - 1,
+		DayCosts:          map[string]float64{"2026-07-01": 10.0},
+		FileState:         map[string]FileProcessState{"/a.jsonl": {Size: 10, Offset: 10}},
+		ProcessedMessages: map[string]bool{"msg1:req1": true},
+	}
+	saveCostCache(cacheFile, stale)
+
+	loaded := loadCostCache(cacheFile)
+
+	if loaded.Version != costCacheVersion {
+		t.Errorf("expected version %d, got %d", costCacheVersion, loaded.Version)
+	}
+	if len(loaded.DayCosts) != 0 || len(loaded.FileState) != 0 || len(loaded.ProcessedMessages) != 0 {
+		t.Error("stale cache should have been discarded so logs are reprocessed")
 	}
 }
 
