@@ -608,9 +608,15 @@ func TestProcessLogFileDeduplication(t *testing.T) {
 		t.Errorf("expected 1 processed message (deduplicated), got %d", len(cache.ProcessedMessages))
 	}
 
-	// Cost should be for single message only
+	// Cost should be for single message only.
+	//
+	// Compared with a tolerance, not ==: expectedCost is a constant expression
+	// that Go evaluates exactly and rounds once, while the real cost is float64
+	// arithmetic rounded at every step. Whether those agree to the last bit is
+	// architecture-dependent — arm64 fuses multiply-add and lands on the
+	// constant, amd64 doesn't and is one ulp below.
 	expectedCost := (1000.0/1000000)*3.0 + (500.0/1000000)*15.0
-	if cache.DayCosts["2025-11-29"] != expectedCost {
+	if !floatEquals(cache.DayCosts["2025-11-29"], expectedCost) {
 		t.Errorf("expected cost %.6f, got %.6f", expectedCost, cache.DayCosts["2025-11-29"])
 	}
 }
